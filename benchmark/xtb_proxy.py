@@ -97,6 +97,7 @@ def levels(tb, symbols, charge):
         return hessian
 
     levels.gfn1_gradient = gradient_of("GFN1-xTB")
+    levels.gfn2_gradient = gradient_of("GFN2-xTB")
     return engine, hessian_of("GFN2-xTB"), hessian_of("GFN1-xTB"), calls
 
 
@@ -110,6 +111,9 @@ VARIANTS = {
     "SUR-gfn1": {"surrogate": "gfn1", "variant": "delta-hessian"},
     "SUR-gfn1-dg": {"surrogate": "gfn1", "variant": "delta-gradient"},
     "SUR-mmff": {"surrogate": "mmff", "variant": "delta-hessian"},
+    # the same, told the cheap level costs r expensive gradients (micro-iterations capped)
+    "SUR-gfn1@0.1": {"surrogate": "gfn1", "variant": "delta-hessian", "costs": {"expensive": 1.0, "cheap": 0.1}},
+    "SUR-gfn1@0.3": {"surrogate": "gfn1", "variant": "delta-hessian", "costs": {"expensive": 1.0, "cheap": 0.3}},
 }
 
 

@@ -12,6 +12,7 @@ from .model_hessian import lindh_hessian  # noqa: F401
 from .optimizer import Optimizer, Result  # noqa: F401
 from .steps import bfgs_update, rfo_step  # noqa: F401
 from .surrogate import SurrogateOptimizer, SurrogateResult  # noqa: F401
+from .planner import optimize, plan, expected_costs  # noqa: F401
 
 # Handle versioneer
 from ._version import __version__  # noqa: F401

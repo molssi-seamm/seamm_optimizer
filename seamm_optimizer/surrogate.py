@@ -90,6 +90,12 @@ class SurrogateOptimizer:
         For checking the end point (the cheap level's modes confirmed at the
         expensive level, as Optimizer does); no check without either. The cheap
         Hessian also serves the quasi-Newton fallback.
+    costs : dict, optional
+        The cost of one call at each level, {"expensive": c_H, "cheap": c_L} (any
+        units, e.g. seconds): the micro-iterations per step are capped at
+        cheap_budget * c_H / c_L. Without it, inner_max_steps.
+    cheap_budget : float
+        The cheap work allowed per step, in expensive gradients.
     wander : float
         The micro-iterations stop beyond this many trust radii.
     fallback_after : int
@@ -115,6 +121,8 @@ class SurrogateOptimizer:
         inner_fmax_factor=0.3,
         inner_relative=0.1,
         inner_max_steps=50,
+        costs=None,
+        cheap_budget=1.0,
         hessian_engine=None,
         cheap_hessian_engine=None,
         check_minimum=True,
@@ -137,6 +145,11 @@ class SurrogateOptimizer:
         self.inner_fmax = inner_fmax_factor * fmax
         self.inner_relative = inner_relative
         self.inner_max_steps = inner_max_steps
+        # the cost of a call at each level (any units), for capping the cheap work
+        # per step at cheap_budget expensive gradients' worth (Paul 11-24: the figure
+        # of merit is the total time to solution)
+        self.costs = dict(costs) if costs else None
+        self.cheap_budget = cheap_budget
         self.hessian_engine = hessian_engine
         self.cheap_hessian_engine = cheap_hessian_engine
         self.check_minimum = check_minimum
@@ -160,6 +173,15 @@ class SurrogateOptimizer:
 
     def _converged(self, g):
         return float(np.max(np.linalg.norm(g, axis=1))) <= self.fmax
+
+    def _micro_cap(self):
+        """The most micro-iterations per step: inner_max_steps, or fewer when the
+        cheap level is not cheap, so a step's cheap work costs at most cheap_budget
+        expensive gradients (at least 2)."""
+        if not self.costs or not self.costs.get("cheap"):
+            return self.inner_max_steps
+        ratio = self.costs["cheap"] / self.costs["expensive"]
+        return int(max(2, min(self.inner_max_steps, self.cheap_budget / ratio)))
 
     # ------------------------------------------------------------------ descent
     def _plain(self, x, why, history):
@@ -248,7 +270,7 @@ class SurrogateOptimizer:
                     self.symbols,
                     x0,
                     fmax=max(self.inner_fmax, self.inner_relative * _max_force(gH)),
-                    max_steps=self.inner_max_steps,
+                    max_steps=self._micro_cap(),
                     check_minimum=False,
                     # its own trust radius (internal coordinates) no larger than
                     # ours: its first step otherwise left the region at once and
