@@ -107,7 +107,7 @@ def b_torsion(xyz, i, j, k, m):
     c1, c2 = np.cross(b1, b2), np.cross(b2, b3)
     n1, n2 = float(np.dot(c1, c1)), float(np.dot(c2, c2))
     r2 = float(np.linalg.norm(b2))
-    if n1 < 1.0e-8 * r2 * r2 or n2 < 1.0e-8 * r2 * r2:
+    if r2 < 1.0e-6 or n1 < 1.0e-8 * r2 * r2 or n2 < 1.0e-8 * r2 * r2:
         return None
     # Blondel & Karplus (1996) gradient of the dihedral
     tau = math.atan2(r2 * float(np.dot(b1, c2)), float(np.dot(c1, c2)))

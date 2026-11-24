@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 
-"""The optimizer: quasi-Newton minimization in Cartesian coordinates with an RFO /
-trust-region step, a model or computed starting Hessian, BFGS updates, and a check
-that the end point is a minimum, with an escape from a saddle point.
+"""The optimizer: quasi-Newton minimization with an RFO / trust-region step, in
+Cartesians or internal coordinates (geomeTRIC's TRIC, DLC, HDLC or primitives), a
+model or computed starting Hessian, BFGS updates in the coordinates used, a checked
+back-transformation with a Cartesian fallback, and a check that the end point is a
+minimum, with an escape from a saddle point.
 
 The engine is any callable ``engine(xyz) -> (energy, gradient)`` with xyz an N x 3
 array in Å, the energy in eV and the gradient N x 3 in eV/Å. A Hessian engine,
@@ -18,8 +20,9 @@ import logging
 
 import numpy as np
 
-from .geometry import frequencies, rigid_modes
-from .model_hessian import lindh_hessian
+from . import coordinates as coordinate_systems
+from .geometry import frequencies
+from .model_hessian import HARTREE, lindh_hessian
 from .steps import bfgs_update, rfo_step
 
 logger = logging.getLogger(__name__)
@@ -38,6 +41,9 @@ class Result:
     n_hessians: int = 0
     n_steps: int = 0
     n_rejected: int = 0
+    n_fallbacks: int = 0
+    n_rebuilds: int = 0
+    coordinates: str = ""
     minimum: bool | None = None
     lowest_frequency: float | None = None
     escapes: list = field(default_factory=list)
@@ -61,14 +67,18 @@ class Optimizer:
         Converged when the largest atomic force is at most this (eV/Å).
     max_steps : int
         Default 50 + 12 N.
-    hessian : "lindh" | "identity" | "computed" | array | callable
-        The starting Hessian: Lindh's model, ASE's scaled identity, the Hessian
-        engine's, a given 3N x 3N array, or ``callable(symbols, xyz)``.
+    hessian : "lindh" | "geometric" | "identity" | "computed" | array | callable
+        The starting Hessian: Lindh's model, geomeTRIC's guess (internal coordinates
+        only), ASE's scaled identity, the Hessian engine's, a given 3N x 3N array, or
+        ``callable(symbols, xyz)``.
     hessian_engine : callable, optional
         ``hessian_engine(xyz) -> 3N x 3N (eV/Å^2)``, for "computed" and the minimum
         check.
+    coordinates : str
+        "TRIC" (default), "DLC", "HDLC", "primitive" or "cartesian".
     trust, max_trust, min_trust : float
-        The trust radius (Å, the length of the whole step) and its limits.
+        The trust radius and its limits, as the length of the step in the
+        coordinates used (bohr and radians; bohr for Cartesians).
     check_minimum : bool
         With a Hessian engine, check the end point and escape from a saddle point.
     imaginary_threshold : float
@@ -87,9 +97,10 @@ class Optimizer:
         max_steps=None,
         hessian="lindh",
         hessian_engine=None,
-        trust=0.3,
-        max_trust=0.5,
-        min_trust=0.001,
+        coordinates="TRIC",
+        trust=0.5,
+        max_trust=1.0,
+        min_trust=0.002,
         check_minimum=True,
         imaginary_threshold=30.0,
         escape_displacement=0.3,
@@ -103,6 +114,7 @@ class Optimizer:
         self.max_steps = max_steps if max_steps is not None else 50 + 12 * self.n
         self.hessian = hessian
         self.hessian_engine = hessian_engine
+        self.coordinates = coordinates
         self.trust0 = trust
         self.max_trust = max_trust
         self.min_trust = min_trust
@@ -145,34 +157,90 @@ class Optimizer:
 
     # ------------------------------------------------------------------ minimize
     def _minimize(self, xyz):
-        """One quasi-Newton minimization from xyz, without the minimum check."""
-        energy, gradient = self._evaluate(xyz)
-        H = self._starting_hessian(xyz)
+        """One quasi-Newton minimization from xyz, without the minimum check.
+
+        Works in atomic units in the chosen coordinates; energies are reported in eV."""
+        energy, gx = self._evaluate(xyz)
+        coords = coordinate_systems.make(self.coordinates, self.symbols, xyz)
+        gq = coords.gradient(xyz, gx)
+        if self.hessian == "geometric":
+            if not hasattr(coords, "guess_hessian"):
+                raise ValueError("hessian='geometric' needs internal coordinates")
+            hq = coords.guess_hessian(xyz)
+        else:
+            hq = coords.hessian(xyz, gx, self._starting_hessian(xyz))
         trust = self.trust0
-        history = [
-            {"energy": energy, "max_force": _max_force(gradient), "trust": trust}
-        ]
-        n_steps = n_rejected = 0
-        while not self._converged(gradient) and n_steps < self.max_steps:
+        history = [{"energy": energy, "max_force": _max_force(gx), "trust": trust}]
+        n_steps = n_rejected = n_fallbacks = n_rebuilds = 0
+        while not self._converged(gx) and n_steps < self.max_steps:
             n_steps += 1
-            null = rigid_modes(xyz)
-            g = gradient.ravel()
-            s, predicted, kind = rfo_step(g, H, trust, null=null)
-            xyz_new = xyz + s.reshape(self.n, 3)
-            energy_new, gradient_new = self._evaluate(xyz_new)
-            actual = energy_new - energy
+            null = coords.rigid(xyz)
+            dq, predicted, kind = rfo_step(gq, hq, trust, null=null)
+            xyz_new, ok = coords.to_cartesian(xyz, dq)
+            shrink = 0
+            while not ok and shrink < 2:
+                shrink += 1
+                dq, predicted, kind = rfo_step(
+                    gq, hq, 0.5 * np.linalg.norm(dq), null=null
+                )
+                xyz_new, ok = coords.to_cartesian(xyz, dq)
+            if not ok:
+                # the internal step cannot be realized: a Cartesian step from the same
+                # model, then new internal coordinates at the new structure
+                n_fallbacks += 1
+                kind = "Cartesian fallback"
+                cart = coordinate_systems.Cartesian(self.symbols, xyz)
+                hc = cart.hessian(xyz, gx, coords.to_cartesian_hessian(xyz, hq))
+                dc, predicted, _ = rfo_step(
+                    cart.gradient(xyz, gx), hc, min(trust, 0.3), null=cart.rigid(xyz)
+                )
+                xyz_new, _ = cart.to_cartesian(xyz, dc)
+            energy_new, gx_new = self._evaluate(xyz_new)
+            actual = (energy_new - energy) / HARTREE
             ratio = actual / predicted if predicted < 0.0 else -1.0
-            # the curvature information is valid whether or not the step is kept
-            H, _ = bfgs_update(H, s, gradient_new.ravel() - g, null=null)
-            length = float(np.linalg.norm(s))
+            if kind == "Cartesian fallback":
+                hx = coords.to_cartesian_hessian(xyz, hq)
+                coords = coordinate_systems.make(
+                    self.coordinates, self.symbols, xyz_new
+                )
+                n_rebuilds += 1
+                hq = coords.hessian(xyz_new, gx_new, hx)
+                gq_new = coords.gradient(xyz_new, gx_new)
+                gq_old = coords.gradient(xyz, gx)
+                step = coords.difference(xyz_new, xyz)
+                hq, _ = bfgs_update(
+                    hq, step, gq_new - gq_old, null=coords.rigid(xyz_new)
+                )
+            else:
+                gq_new = coords.gradient(xyz_new, gx_new)
+                step = coords.difference(xyz_new, xyz)
+                # the curvature information is valid whether or not the step is kept
+                hq, _ = bfgs_update(hq, step, gq_new - gq, null=null)
+            length = float(np.linalg.norm(step))
             # a rise beyond numerical noise is rejected; tiny rises near convergence
             # are accepted (the gradient is what is converged)
-            if actual > 1.0e-6 and ratio < 0.0:
+            if energy_new - energy > 1.0e-6 and ratio < 0.0:
                 n_rejected += 1
                 trust = max(self.min_trust, 0.25 * length)
-                history.append({"rejected": True, "energy": energy_new, "trust": trust})
+                if kind == "Cartesian fallback":
+                    # the coordinates were rebuilt at the rejected structure: rebuild
+                    # them where we stay
+                    hx = coords.to_cartesian_hessian(xyz_new, hq)
+                    coords = coordinate_systems.make(
+                        self.coordinates, self.symbols, xyz
+                    )
+                    hq = coords.hessian(xyz, gx, hx)
+                    gq = coords.gradient(xyz, gx)
+                history.append(
+                    {
+                        "rejected": True,
+                        "energy": energy_new,
+                        "trust": trust,
+                        "kind": kind,
+                    }
+                )
                 continue
-            xyz, energy, gradient = xyz_new, energy_new, gradient_new
+            xyz, energy, gx, gq = xyz_new, energy_new, gx_new, gq_new
             if ratio > 0.75 and length > 0.8 * trust:
                 trust = min(self.max_trust, 2.0 * trust)
             elif ratio < 0.25:
@@ -180,7 +248,7 @@ class Optimizer:
             history.append(
                 {
                     "energy": energy,
-                    "max_force": _max_force(gradient),
+                    "max_force": _max_force(gx),
                     "trust": trust,
                     "ratio": ratio,
                     "step": length,
@@ -190,10 +258,13 @@ class Optimizer:
         return Result(
             xyz=xyz,
             energy=energy,
-            gradient=gradient,
-            converged=self._converged(gradient),
+            gradient=gx,
+            converged=self._converged(gx),
             n_steps=n_steps,
             n_rejected=n_rejected,
+            n_fallbacks=n_fallbacks,
+            n_rebuilds=n_rebuilds,
+            coordinates=coords.name,
             history=history,
         )
 
@@ -237,6 +308,8 @@ class Optimizer:
                 )
                 best.n_steps += result.n_steps
                 best.n_rejected += result.n_rejected
+                best.n_fallbacks += result.n_fallbacks
+                best.n_rebuilds += result.n_rebuilds
                 result = best
         result.n_gradients = self.n_gradients
         result.n_hessians = self.n_hessians
