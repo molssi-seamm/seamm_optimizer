@@ -332,11 +332,14 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">coordinates</span> <span class="k">as</span> <span class="n">coordinate_systems</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">.geometry</span><span class="w"> </span><span class="kn">import</span> <span class="n">frequencies</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.geometry</span><span class="w"> </span><span class="kn">import</span> <span class="n">_EV_A2_AMU_TO_CM2</span><span class="p">,</span> <span class="n">frequencies</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.model_hessian</span><span class="w"> </span><span class="kn">import</span> <span class="n">HARTREE</span><span class="p">,</span> <span class="n">lindh_hessian</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.steps</span><span class="w"> </span><span class="kn">import</span> <span class="n">bfgs_update</span><span class="p">,</span> <span class="n">positive_hessian</span><span class="p">,</span> <span class="n">rfo_step</span>
 
 <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1">#: how many recent steps judge a refreshed Hessian</span>
+<span class="n">REFRESH_PAIRS</span> <span class="o">=</span> <span class="mi">5</span>
 
 <span class="c1">#: ASE BFGS's starting Hessian, a scaled identity, kept for comparisons</span>
 <span class="n">ASE_IDENTITY</span> <span class="o">=</span> <span class="mf">70.0</span>  <span class="c1"># eV/Å^2</span>
@@ -354,6 +357,7 @@
     <span class="n">n_hessians</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
     <span class="n">n_cheap_hessians</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
     <span class="n">n_refreshes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">n_refreshes_declined</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
     <span class="n">n_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
     <span class="n">n_rejected</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
     <span class="n">n_fallbacks</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
@@ -363,6 +367,7 @@
     <span class="n">minimum</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">lowest_frequency</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">escapes</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">confirmations</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
     <span class="n">history</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
 
     <span class="nd">@property</span>
@@ -414,6 +419,11 @@
 <span class="sd">    escape_displacement : float</span>
 <span class="sd">        The largest atomic displacement (Å) along the imaginary mode.</span>
 <span class="sd">    escape_rounds : int</span>
+<span class="sd">        How many times to escape from a saddle point at most.</span>
+<span class="sd">    confirm_displacement : float</span>
+<span class="sd">        The largest atomic displacement (Å) for confirming, from expensive gradients,</span>
+<span class="sd">        an imaginary mode that only the cheap level's Hessian shows (two gradients</span>
+<span class="sd">        per mode), before escaping along it.</span>
 <span class="sd">    """</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
@@ -436,6 +446,7 @@
         <span class="n">imaginary_threshold</span><span class="o">=</span><span class="mf">30.0</span><span class="p">,</span>
         <span class="n">escape_displacement</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
         <span class="n">escape_rounds</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+        <span class="n">confirm_displacement</span><span class="o">=</span><span class="mf">0.02</span><span class="p">,</span>
     <span class="p">):</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">engine</span> <span class="o">=</span> <span class="n">engine</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">symbols</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">symbols</span><span class="p">)</span>
@@ -456,10 +467,13 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">imaginary_threshold</span> <span class="o">=</span> <span class="n">imaginary_threshold</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">escape_displacement</span> <span class="o">=</span> <span class="n">escape_displacement</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">escape_rounds</span> <span class="o">=</span> <span class="n">escape_rounds</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">confirm_displacement</span> <span class="o">=</span> <span class="n">confirm_displacement</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">confirmations</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">n_gradients</span> <span class="o">=</span> <span class="mi">0</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">n_hessians</span> <span class="o">=</span> <span class="mi">0</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">n_cheap_hessians</span> <span class="o">=</span> <span class="mi">0</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">n_refreshes</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_refreshes_declined</span> <span class="o">=</span> <span class="mi">0</span>
 
     <span class="c1"># ------------------------------------------------------------------ engines</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_evaluate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xyz</span><span class="p">):</span>
@@ -519,6 +533,9 @@
         <span class="n">trust</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">trust0</span>
         <span class="n">history</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">"energy"</span><span class="p">:</span> <span class="n">energy</span><span class="p">,</span> <span class="s2">"max_force"</span><span class="p">:</span> <span class="n">_max_force</span><span class="p">(</span><span class="n">gx</span><span class="p">),</span> <span class="s2">"trust"</span><span class="p">:</span> <span class="n">trust</span><span class="p">}]</span>
         <span class="n">n_steps</span> <span class="o">=</span> <span class="n">n_rejected</span> <span class="o">=</span> <span class="n">n_fallbacks</span> <span class="o">=</span> <span class="n">n_rebuilds</span> <span class="o">=</span> <span class="n">poor</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="c1"># the recent steps and gradient changes in the current coordinates, for</span>
+        <span class="c1"># judging a refreshed Hessian (cleared when the coordinates are rebuilt)</span>
+        <span class="n">pairs</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="n">last_step</span> <span class="o">=</span> <span class="mf">0.0</span>
         <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_converged</span><span class="p">(</span><span class="n">gx</span><span class="p">)</span> <span class="ow">and</span> <span class="n">n_steps</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_steps</span><span class="p">:</span>
             <span class="n">n_steps</span> <span class="o">+=</span> <span class="mi">1</span>
@@ -552,6 +569,7 @@
                     <span class="bp">self</span><span class="o">.</span><span class="n">coordinates</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">symbols</span><span class="p">,</span> <span class="n">xyz_new</span>
                 <span class="p">)</span>
                 <span class="n">n_rebuilds</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">pairs</span> <span class="o">=</span> <span class="p">[]</span>
                 <span class="n">hq</span> <span class="o">=</span> <span class="n">coords</span><span class="o">.</span><span class="n">hessian</span><span class="p">(</span><span class="n">xyz_new</span><span class="p">,</span> <span class="n">gx_new</span><span class="p">,</span> <span class="n">hx</span><span class="p">)</span>
                 <span class="n">gq_new</span> <span class="o">=</span> <span class="n">coords</span><span class="o">.</span><span class="n">gradient</span><span class="p">(</span><span class="n">xyz_new</span><span class="p">,</span> <span class="n">gx_new</span><span class="p">)</span>
                 <span class="n">gq_old</span> <span class="o">=</span> <span class="n">coords</span><span class="o">.</span><span class="n">gradient</span><span class="p">(</span><span class="n">xyz</span><span class="p">,</span> <span class="n">gx</span><span class="p">)</span>
@@ -564,6 +582,7 @@
                 <span class="n">step</span> <span class="o">=</span> <span class="n">coords</span><span class="o">.</span><span class="n">difference</span><span class="p">(</span><span class="n">xyz_new</span><span class="p">,</span> <span class="n">xyz</span><span class="p">)</span>
                 <span class="c1"># the curvature information is valid whether or not the step is kept</span>
                 <span class="n">hq</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">bfgs_update</span><span class="p">(</span><span class="n">hq</span><span class="p">,</span> <span class="n">step</span><span class="p">,</span> <span class="n">gq_new</span> <span class="o">-</span> <span class="n">gq</span><span class="p">,</span> <span class="n">null</span><span class="o">=</span><span class="n">null</span><span class="p">)</span>
+                <span class="n">pairs</span> <span class="o">=</span> <span class="p">(</span><span class="n">pairs</span> <span class="o">+</span> <span class="p">[(</span><span class="n">step</span><span class="p">,</span> <span class="n">gq_new</span> <span class="o">-</span> <span class="n">gq</span><span class="p">)])[</span><span class="o">-</span><span class="n">REFRESH_PAIRS</span><span class="p">:]</span>
             <span class="n">length</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">step</span><span class="p">))</span>
             <span class="c1"># Only a step much worse than predicted (ratio &lt; -1) is rejected, as in</span>
             <span class="c1"># geomeTRIC: rejecting every small rise cost a gradient each time and,</span>
@@ -581,6 +600,7 @@
                     <span class="p">)</span>
                     <span class="n">hq</span> <span class="o">=</span> <span class="n">coords</span><span class="o">.</span><span class="n">hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">,</span> <span class="n">gx</span><span class="p">,</span> <span class="n">hx</span><span class="p">)</span>
                     <span class="n">gq</span> <span class="o">=</span> <span class="n">coords</span><span class="o">.</span><span class="n">gradient</span><span class="p">(</span><span class="n">xyz</span><span class="p">,</span> <span class="n">gx</span><span class="p">)</span>
+                    <span class="n">pairs</span> <span class="o">=</span> <span class="p">[]</span>
                 <span class="n">history</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                     <span class="p">{</span>
                         <span class="s2">"rejected"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
@@ -601,10 +621,7 @@
                     <span class="k">else</span> <span class="n">poor</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">refresh_after</span>
                 <span class="p">)</span>
                 <span class="k">if</span> <span class="n">due</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_converged</span><span class="p">(</span><span class="n">gx</span><span class="p">):</span>
-                    <span class="n">hq</span> <span class="o">=</span> <span class="n">positive_hessian</span><span class="p">(</span>
-                        <span class="n">coords</span><span class="o">.</span><span class="n">hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">,</span> <span class="n">gx</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cheap_hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">))</span>
-                    <span class="p">)</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">n_refreshes</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">hq</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_refreshed</span><span class="p">(</span><span class="n">coords</span><span class="p">,</span> <span class="n">xyz</span><span class="p">,</span> <span class="n">gx</span><span class="p">,</span> <span class="n">hq</span><span class="p">,</span> <span class="n">pairs</span><span class="p">)</span>
                     <span class="n">poor</span> <span class="o">=</span> <span class="mi">0</span>
             <span class="c1"># good steps grow the trust radius, poor ones halve it (from the smaller</span>
             <span class="c1"># of the radius and the step), okay ones leave it</span>
@@ -637,14 +654,67 @@
         <span class="p">)</span>
 
     <span class="c1"># ------------------------------------------------------------------ minimum check</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_lowest_mode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xyz</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_refreshed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">coords</span><span class="p">,</span> <span class="n">xyz</span><span class="p">,</span> <span class="n">gx</span><span class="p">,</span> <span class="n">hq</span><span class="p">,</span> <span class="n">pairs</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""The Hessian after a refresh from the cheap level: the cheap Hessian with</span>
+<span class="sd">        the recent BFGS updates replayed on it, but only if it reproduces those</span>
+<span class="sd">        steps' gradient changes better than the current model; otherwise the current</span>
+<span class="sd">        model. A cheap level that disagrees with the expensive one (MMFF under</span>
+<span class="sd">        GFN2-xTB) was refreshed 4 times and threw away what BFGS had learned: 26</span>
+<span class="sd">        gradients against 20 with Lindh's model alone (Design 2026-11-24)."""</span>
+        <span class="n">null</span> <span class="o">=</span> <span class="n">coords</span><span class="o">.</span><span class="n">rigid</span><span class="p">(</span><span class="n">xyz</span><span class="p">)</span>
+        <span class="n">candidate</span> <span class="o">=</span> <span class="n">positive_hessian</span><span class="p">(</span><span class="n">coords</span><span class="o">.</span><span class="n">hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">,</span> <span class="n">gx</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cheap_hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">)))</span>
+        <span class="k">for</span> <span class="n">s</span><span class="p">,</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">pairs</span><span class="p">:</span>
+            <span class="n">candidate</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">bfgs_update</span><span class="p">(</span><span class="n">candidate</span><span class="p">,</span> <span class="n">s</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">null</span><span class="o">=</span><span class="n">null</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">pairs</span><span class="p">:</span>
+            <span class="n">P</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">hq</span><span class="p">))</span> <span class="o">-</span> <span class="n">null</span> <span class="o">@</span> <span class="n">null</span><span class="o">.</span><span class="n">T</span> <span class="k">if</span> <span class="n">null</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">hq</span><span class="p">))</span>
+
+            <span class="k">def</span><span class="w"> </span><span class="nf">misfit</span><span class="p">(</span><span class="n">H</span><span class="p">):</span>
+                <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span>
+                    <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">P</span> <span class="o">@</span> <span class="p">(</span><span class="n">H</span> <span class="o">@</span> <span class="n">s</span> <span class="o">-</span> <span class="n">y</span><span class="p">))</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span><span class="p">,</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">pairs</span>
+                <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">misfit</span><span class="p">(</span><span class="n">candidate</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">misfit</span><span class="p">(</span><span class="n">hq</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">n_refreshes_declined</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">return</span> <span class="n">hq</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_refreshes</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">candidate</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_minimum_check</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xyz</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""(lowest frequency in cm^-1, the Cartesian mode to escape along or None).</span>
+
+<span class="sd">        With a Hessian at the expensive level the frequencies are its own. With only</span>
+<span class="sd">        the cheap level's, an imaginary mode there may not be one on the expensive</span>
+<span class="sd">        surface: PM7's minimum of an amine is a ~180i saddle on GFN2-xTB, and escaping</span>
+<span class="sd">        along it twice both ways cost 6x the gradients and ended "not a minimum"</span>
+<span class="sd">        (Design 2026-11-24). So each such mode is confirmed first, from the expensive</span>
+<span class="sd">        gradients displaced along it both ways: the curvature d.(g(+) - g(-))/2h, with</span>
+<span class="sd">        d the mode as frequencies() gives it (M^-1/2 times the mass-weighted mode)."""</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">hessian_engine</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">H</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_computed_hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">)</span>
+            <span class="n">H</span><span class="p">,</span> <span class="n">cheap</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_computed_hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">),</span> <span class="kc">False</span>
         <span class="k">else</span><span class="p">:</span>
-            <span class="n">H</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cheap_hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">)</span>
+            <span class="n">H</span><span class="p">,</span> <span class="n">cheap</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cheap_hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">),</span> <span class="kc">True</span>
         <span class="n">nu</span><span class="p">,</span> <span class="n">modes</span> <span class="o">=</span> <span class="n">frequencies</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">symbols</span><span class="p">,</span> <span class="n">xyz</span><span class="p">,</span> <span class="n">H</span><span class="p">)</span>
-        <span class="n">k</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="n">nu</span><span class="p">))</span>
-        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">nu</span><span class="p">[</span><span class="n">k</span><span class="p">]),</span> <span class="n">modes</span><span class="p">[:,</span> <span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">nu</span><span class="p">)</span>
+        <span class="n">suspects</span> <span class="o">=</span> <span class="p">[</span><span class="n">k</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">order</span> <span class="k">if</span> <span class="n">nu</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">&lt;</span> <span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">imaginary_threshold</span><span class="p">]</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">cheap</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">suspects</span><span class="p">:</span>
+            <span class="n">k</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">order</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+            <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">nu</span><span class="p">[</span><span class="n">k</span><span class="p">]),</span> <span class="p">(</span><span class="n">modes</span><span class="p">[:,</span> <span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">suspects</span> <span class="k">else</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="n">others</span> <span class="o">=</span> <span class="p">[</span><span class="n">nu</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">order</span> <span class="k">if</span> <span class="n">nu</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">imaginary_threshold</span><span class="p">]</span>
+        <span class="n">lowest</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="n">others</span><span class="p">))</span> <span class="k">if</span> <span class="n">others</span> <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">suspects</span><span class="p">:</span>
+            <span class="n">d</span> <span class="o">=</span> <span class="n">modes</span><span class="p">[:,</span> <span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+            <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">confirm_displacement</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)))</span>
+            <span class="n">_</span><span class="p">,</span> <span class="n">gp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_evaluate</span><span class="p">(</span><span class="n">xyz</span> <span class="o">+</span> <span class="n">h</span> <span class="o">*</span> <span class="n">d</span><span class="p">)</span>
+            <span class="n">_</span><span class="p">,</span> <span class="n">gm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_evaluate</span><span class="p">(</span><span class="n">xyz</span> <span class="o">-</span> <span class="n">h</span> <span class="o">*</span> <span class="n">d</span><span class="p">)</span>
+            <span class="n">curvature</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">d</span> <span class="o">*</span> <span class="p">(</span><span class="n">gp</span> <span class="o">-</span> <span class="n">gm</span><span class="p">)))</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">h</span><span class="p">)</span>
+            <span class="n">nu_x</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span>
+                <span class="n">np</span><span class="o">.</span><span class="n">sign</span><span class="p">(</span><span class="n">curvature</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">curvature</span><span class="p">)</span> <span class="o">*</span> <span class="n">_EV_A2_AMU_TO_CM2</span><span class="p">)</span>
+            <span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">confirmations</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">"cheap"</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">nu</span><span class="p">[</span><span class="n">k</span><span class="p">]),</span> <span class="s2">"expensive"</span><span class="p">:</span> <span class="n">nu_x</span><span class="p">})</span>
+            <span class="k">if</span> <span class="n">nu_x</span> <span class="o">&lt;</span> <span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">imaginary_threshold</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">nu_x</span><span class="p">,</span> <span class="n">d</span>
+            <span class="n">lowest</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">lowest</span><span class="p">,</span> <span class="n">nu_x</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">lowest</span><span class="p">,</span> <span class="kc">None</span>
 
 <div class="viewcode-block" id="Optimizer.run">
 <a class="viewcode-back" href="../../api/seamm_optimizer.html#seamm_optimizer.optimizer.Optimizer.run">[docs]</a>
@@ -656,9 +726,9 @@
         <span class="n">checker</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">hessian_engine</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">cheap_hessian_engine</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">check_minimum</span> <span class="ow">and</span> <span class="n">checker</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">result</span><span class="o">.</span><span class="n">converged</span><span class="p">:</span>
             <span class="k">for</span> <span class="n">round_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">escape_rounds</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
-                <span class="n">nu</span><span class="p">,</span> <span class="n">mode</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lowest_mode</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">xyz</span><span class="p">)</span>
+                <span class="n">nu</span><span class="p">,</span> <span class="n">mode</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_minimum_check</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">xyz</span><span class="p">)</span>
                 <span class="n">result</span><span class="o">.</span><span class="n">lowest_frequency</span> <span class="o">=</span> <span class="n">nu</span>
-                <span class="n">result</span><span class="o">.</span><span class="n">minimum</span> <span class="o">=</span> <span class="n">nu</span> <span class="o">&gt;</span> <span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">imaginary_threshold</span>
+                <span class="n">result</span><span class="o">.</span><span class="n">minimum</span> <span class="o">=</span> <span class="n">mode</span> <span class="ow">is</span> <span class="kc">None</span>
                 <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">minimum</span> <span class="ow">or</span> <span class="n">round_</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">escape_rounds</span><span class="p">:</span>
                     <span class="k">break</span>
                 <span class="n">d</span> <span class="o">=</span> <span class="n">mode</span> <span class="o">*</span> <span class="p">(</span>
@@ -689,6 +759,8 @@
         <span class="n">result</span><span class="o">.</span><span class="n">n_hessians</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_hessians</span>
         <span class="n">result</span><span class="o">.</span><span class="n">n_cheap_hessians</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_cheap_hessians</span>
         <span class="n">result</span><span class="o">.</span><span class="n">n_refreshes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_refreshes</span>
+        <span class="n">result</span><span class="o">.</span><span class="n">n_refreshes_declined</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_refreshes_declined</span>
+        <span class="n">result</span><span class="o">.</span><span class="n">confirmations</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">confirmations</span>
         <span class="k">return</span> <span class="n">result</span></div>
 </div>
 
