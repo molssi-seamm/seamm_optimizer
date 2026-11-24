@@ -33,25 +33,44 @@ class MMFF:
         self.scale = self._grad_scale()
         self.n_calls = 0
 
+    def _ff(self, xyz):
+        """A force field built at xyz. RDKit's reused force fields are unreliable here:
+        CalcEnergy(pos)/CalcGrad(pos) are stateful (the same point gave different
+        gradients after other calls) and the no-argument calls did not follow
+        SetAtomPosition consistently; a fresh force field matches finite differences."""
+        mol = Chem.Mol(self.mol)
+        conf = mol.GetConformer()
+        for i, p in enumerate(np.asarray(xyz, float).reshape(-1, 3)):
+            conf.SetAtomPosition(i, p.tolist())
+        # the force field points at mol's coordinates: return mol too, to keep it alive
+        return AllChem.MMFFGetMoleculeForceField(mol, self.props), mol
+
     def _energy(self, xyz):
-        return self.ff.CalcEnergy(xyz.ravel().tolist())
+        ff, _mol = self._ff(xyz)
+        return ff.CalcEnergy()
 
     def _grad_scale(self):
-        x = self.xyz + 0.05  # off the embedded structure
-        g = np.array(self.ff.CalcGrad(x.ravel().tolist()))
+        rng = np.random.default_rng(3)
+        x = self.xyz + 0.05 * rng.normal(
+            size=self.xyz.shape
+        )  # off the embedded structure
+        ff, _mol = self._ff(x)
+        g = np.array(ff.CalcGrad())
         k = int(np.argmax(np.abs(g)))
         h = 1.0e-4
         xp, xm = x.ravel().copy(), x.ravel().copy()
         xp[k] += h
         xm[k] -= h
-        fd = (self._energy(xp) - self._energy(xm)) / (2 * h)
+        fd = (self._energy(xp.reshape(-1, 3)) - self._energy(xm.reshape(-1, 3))) / (
+            2 * h
+        )
         return fd / g[k]
 
     def engine(self, xyz):
         self.n_calls += 1
-        x = np.asarray(xyz, float).ravel().tolist()
-        e = self.ff.CalcEnergy(x) * KCAL_EV
-        g = np.array(self.ff.CalcGrad(x)) * self.scale * KCAL_EV
+        ff, _mol = self._ff(xyz)
+        e = ff.CalcEnergy() * KCAL_EV
+        g = np.array(ff.CalcGrad()) * self.scale * KCAL_EV
         return e, g.reshape(-1, 3)
 
     def hessian(self, xyz, h=1.0e-4):

@@ -60,13 +60,23 @@ def mmff_engine(symbols, xyz, charge):
     props = AllChem.MMFFGetMoleculeProperties(mol)
     if props is None:
         return None
-    ff = AllChem.MMFFGetMoleculeForceField(mol, props)
     calls = [0]
+
+    def _eg(x):
+        # a force field built at x: RDKit's reused force fields gave inconsistent
+        # gradients (CalcGrad(pos) is stateful; no-argument calls did not follow the
+        # conformer), a fresh one matches finite differences
+        m = Chem.Mol(mol)
+        conf = m.GetConformer()
+        for i, p in enumerate(np.asarray(x, float).reshape(-1, 3)):
+            conf.SetAtomPosition(i, p.tolist())
+        ff = AllChem.MMFFGetMoleculeForceField(m, props)
+        return ff.CalcEnergy(), np.array(ff.CalcGrad())
 
     def engine(x):
         calls[0] += 1
-        flat = np.asarray(x, float).ravel().tolist()
-        return ff.CalcEnergy(flat) * KCAL_EV, np.array(ff.CalcGrad(flat)).reshape(-1, 3) * KCAL_EV
+        e, g = _eg(x)
+        return e * KCAL_EV, g.reshape(-1, 3) * KCAL_EV
 
     def hessian(x, h=1.0e-4):
         x0 = np.asarray(x, float).ravel()
@@ -75,9 +85,7 @@ def mmff_engine(symbols, xyz, charge):
             xp, xm = x0.copy(), x0.copy()
             xp[k] += h
             xm[k] -= h
-            gp = np.array(ff.CalcGrad(xp.tolist()))
-            gm = np.array(ff.CalcGrad(xm.tolist()))
-            H[k] = (gp - gm) / (2 * h) * KCAL_EV
+            H[k] = (_eg(xp)[1] - _eg(xm)[1]) / (2 * h) * KCAL_EV
         return 0.5 * (H + H.T)
 
     return engine, hessian, calls
