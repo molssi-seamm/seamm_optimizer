@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
 
-"""The optimizer: quasi-Newton minimization in Cartesian coordinates with an RFO /
-trust-region step, a model or computed starting Hessian, BFGS updates, and a check
-that the end point is a minimum, with an escape from a saddle point.
+"""The optimizer: quasi-Newton minimization with an RFO / trust-region step, in
+Cartesians or internal coordinates (geomeTRIC's TRIC, DLC, HDLC or primitives), a
+model or computed starting Hessian, BFGS updates in the coordinates used, a checked
+back-transformation with a Cartesian fallback, and a check that the end point is a
+minimum, with an escape from a saddle point.
 
 The engine is any callable ``engine(xyz) -> (energy, gradient)`` with xyz an N x 3
-array in Å, the energy in eV and the gradient N x 3 in eV/Å. A Hessian engine,
-``hessian_engine(xyz) -> 3N x 3N`` in eV/Å^2, is optional: it is used for the starting
-Hessian (hessian="computed") and for the minimum check.
+array in Å, the energy in eV and the gradient N x 3 in eV/Å. Two Hessian engines,
+each ``(xyz) -> 3N x 3N`` in eV/Å^2, are optional:
+
+- ``hessian_engine``, at the expensive level: the starting Hessian with
+  hessian="computed", and the minimum check;
+- ``cheap_hessian_engine``, at a cheap level (PM7, GFN2-xTB, an MLFF, a force field):
+  the starting Hessian with hessian="cheap", refreshed when the quadratic model keeps
+  predicting the energy change badly (`refresh`), and the minimum check when there is
+  no expensive one (proposal §5).
 
 Convergence is the shared criterion of the benchmark: the largest force on any atom
 at most `fmax` (default 0.0015 eV/Å, the CBH criterion).
@@ -18,9 +26,10 @@ import logging
 
 import numpy as np
 
-from .geometry import frequencies, rigid_modes
-from .model_hessian import lindh_hessian
-from .steps import bfgs_update, rfo_step
+from . import coordinates as coordinate_systems
+from .geometry import frequencies
+from .model_hessian import HARTREE, lindh_hessian
+from .steps import bfgs_update, positive_hessian, rfo_step
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +45,14 @@ class Result:
     converged: bool
     n_gradients: int = 0
     n_hessians: int = 0
+    n_cheap_hessians: int = 0
+    n_refreshes: int = 0
     n_steps: int = 0
     n_rejected: int = 0
+    n_fallbacks: int = 0
+    n_rebuilds: int = 0
+    coordinates: str = ""
+    last_step: float = 0.0
     minimum: bool | None = None
     lowest_frequency: float | None = None
     escapes: list = field(default_factory=list)
@@ -61,14 +76,27 @@ class Optimizer:
         Converged when the largest atomic force is at most this (eV/Å).
     max_steps : int
         Default 50 + 12 N.
-    hessian : "lindh" | "identity" | "computed" | array | callable
-        The starting Hessian: Lindh's model, ASE's scaled identity, the Hessian
-        engine's, a given 3N x 3N array, or ``callable(symbols, xyz)``.
+    hessian : "lindh" | "geometric" | "cheap" | "identity" | "computed" | array |
+        callable
+        The starting Hessian: Lindh's model, geomeTRIC's guess (internal coordinates
+        only), the cheap Hessian engine's, ASE's scaled identity, the expensive
+        Hessian engine's, a given 3N x 3N array, or ``callable(symbols, xyz)``.
     hessian_engine : callable, optional
-        ``hessian_engine(xyz) -> 3N x 3N (eV/Å^2)``, for "computed" and the minimum
-        check.
+        ``hessian_engine(xyz) -> 3N x 3N (eV/Å^2)`` at the expensive level, for
+        "computed" and the minimum check.
+    cheap_hessian_engine : callable, optional
+        The same at a cheap level, for "cheap", refreshes and (without an expensive
+        one) the minimum check.
+    refresh : "adaptive" | "never" | int
+        With a cheap Hessian engine: recompute the Hessian after `refresh_after` steps
+        in a row whose actual energy change disagreed with the prediction (ratio
+        outside 0.5-1.5), or every `refresh` steps when an int.
+    refresh_after : int
+    coordinates : str
+        "TRIC" (default), "DLC", "HDLC", "primitive" or "cartesian".
     trust, max_trust, min_trust : float
-        The trust radius (Å, the length of the whole step) and its limits.
+        The trust radius and its limits, as the length of the step in the
+        coordinates used (bohr and radians; bohr for Cartesians).
     check_minimum : bool
         With a Hessian engine, check the end point and escape from a saddle point.
     imaginary_threshold : float
@@ -87,9 +115,13 @@ class Optimizer:
         max_steps=None,
         hessian="lindh",
         hessian_engine=None,
-        trust=0.3,
-        max_trust=0.5,
-        min_trust=0.001,
+        cheap_hessian_engine=None,
+        refresh="adaptive",
+        refresh_after=3,
+        coordinates="TRIC",
+        trust=0.5,
+        max_trust=1.0,
+        min_trust=0.002,
         check_minimum=True,
         imaginary_threshold=30.0,
         escape_displacement=0.3,
@@ -103,6 +135,10 @@ class Optimizer:
         self.max_steps = max_steps if max_steps is not None else 50 + 12 * self.n
         self.hessian = hessian
         self.hessian_engine = hessian_engine
+        self.cheap_hessian_engine = cheap_hessian_engine
+        self.refresh = refresh
+        self.refresh_after = refresh_after
+        self.coordinates = coordinates
         self.trust0 = trust
         self.max_trust = max_trust
         self.min_trust = min_trust
@@ -112,6 +148,8 @@ class Optimizer:
         self.escape_rounds = escape_rounds
         self.n_gradients = 0
         self.n_hessians = 0
+        self.n_cheap_hessians = 0
+        self.n_refreshes = 0
 
     # ------------------------------------------------------------------ engines
     def _evaluate(self, xyz):
@@ -126,6 +164,13 @@ class Optimizer:
         H = np.asarray(self.hessian_engine(xyz), float)
         return 0.5 * (H + H.T)
 
+    def _cheap_hessian(self, xyz):
+        if self.cheap_hessian_engine is None:
+            raise ValueError("hessian='cheap' needs a cheap_hessian_engine")
+        self.n_cheap_hessians += 1
+        H = np.asarray(self.cheap_hessian_engine(xyz), float)
+        return 0.5 * (H + H.T)
+
     def _starting_hessian(self, xyz):
         choice = self.hessian
         if isinstance(choice, np.ndarray):
@@ -138,6 +183,8 @@ class Optimizer:
             return ASE_IDENTITY * np.eye(3 * self.n)
         if choice == "computed":
             return self._computed_hessian(xyz)
+        if choice == "cheap":
+            return self._cheap_hessian(xyz)
         raise ValueError(f"Unknown starting Hessian {choice!r}")
 
     def _converged(self, gradient):
@@ -145,34 +192,108 @@ class Optimizer:
 
     # ------------------------------------------------------------------ minimize
     def _minimize(self, xyz):
-        """One quasi-Newton minimization from xyz, without the minimum check."""
-        energy, gradient = self._evaluate(xyz)
-        H = self._starting_hessian(xyz)
+        """One quasi-Newton minimization from xyz, without the minimum check.
+
+        Works in atomic units in the chosen coordinates; energies are reported in eV."""
+        energy, gx = self._evaluate(xyz)
+        coords = coordinate_systems.make(self.coordinates, self.symbols, xyz)
+        gq = coords.gradient(xyz, gx)
+        if self.hessian == "geometric":
+            if not hasattr(coords, "guess_hessian"):
+                raise ValueError("hessian='geometric' needs internal coordinates")
+            hq = coords.guess_hessian(xyz)
+        else:
+            hq = coords.hessian(xyz, gx, self._starting_hessian(xyz))
+            if self.hessian in ("cheap", "computed"):
+                hq = positive_hessian(hq)
         trust = self.trust0
-        history = [
-            {"energy": energy, "max_force": _max_force(gradient), "trust": trust}
-        ]
-        n_steps = n_rejected = 0
-        while not self._converged(gradient) and n_steps < self.max_steps:
+        history = [{"energy": energy, "max_force": _max_force(gx), "trust": trust}]
+        n_steps = n_rejected = n_fallbacks = n_rebuilds = poor = 0
+        last_step = 0.0
+        while not self._converged(gx) and n_steps < self.max_steps:
             n_steps += 1
-            null = rigid_modes(xyz)
-            g = gradient.ravel()
-            s, predicted, kind = rfo_step(g, H, trust, null=null)
-            xyz_new = xyz + s.reshape(self.n, 3)
-            energy_new, gradient_new = self._evaluate(xyz_new)
-            actual = energy_new - energy
+            null = coords.rigid(xyz)
+            dq, predicted, kind = rfo_step(gq, hq, trust, null=null)
+            xyz_new, ok = coords.to_cartesian(xyz, dq)
+            shrink = 0
+            while not ok and shrink < 2:
+                shrink += 1
+                dq, predicted, kind = rfo_step(
+                    gq, hq, 0.5 * np.linalg.norm(dq), null=null
+                )
+                xyz_new, ok = coords.to_cartesian(xyz, dq)
+            if not ok:
+                # the internal step cannot be realized: a Cartesian step from the same
+                # model, then new internal coordinates at the new structure
+                n_fallbacks += 1
+                kind = "Cartesian fallback"
+                cart = coordinate_systems.Cartesian(self.symbols, xyz)
+                hc = cart.hessian(xyz, gx, coords.to_cartesian_hessian(xyz, hq))
+                dc, predicted, _ = rfo_step(
+                    cart.gradient(xyz, gx), hc, min(trust, 0.3), null=cart.rigid(xyz)
+                )
+                xyz_new, _ = cart.to_cartesian(xyz, dc)
+            energy_new, gx_new = self._evaluate(xyz_new)
+            actual = (energy_new - energy) / HARTREE
             ratio = actual / predicted if predicted < 0.0 else -1.0
-            # the curvature information is valid whether or not the step is kept
-            H, _ = bfgs_update(H, s, gradient_new.ravel() - g, null=null)
-            length = float(np.linalg.norm(s))
+            if kind == "Cartesian fallback":
+                hx = coords.to_cartesian_hessian(xyz, hq)
+                coords = coordinate_systems.make(
+                    self.coordinates, self.symbols, xyz_new
+                )
+                n_rebuilds += 1
+                hq = coords.hessian(xyz_new, gx_new, hx)
+                gq_new = coords.gradient(xyz_new, gx_new)
+                gq_old = coords.gradient(xyz, gx)
+                step = coords.difference(xyz_new, xyz)
+                hq, _ = bfgs_update(
+                    hq, step, gq_new - gq_old, null=coords.rigid(xyz_new)
+                )
+            else:
+                gq_new = coords.gradient(xyz_new, gx_new)
+                step = coords.difference(xyz_new, xyz)
+                # the curvature information is valid whether or not the step is kept
+                hq, _ = bfgs_update(hq, step, gq_new - gq, null=null)
+            length = float(np.linalg.norm(step))
             # a rise beyond numerical noise is rejected; tiny rises near convergence
             # are accepted (the gradient is what is converged)
-            if actual > 1.0e-6 and ratio < 0.0:
+            if energy_new - energy > 1.0e-6 and ratio < 0.0:
                 n_rejected += 1
                 trust = max(self.min_trust, 0.25 * length)
-                history.append({"rejected": True, "energy": energy_new, "trust": trust})
+                if kind == "Cartesian fallback":
+                    # the coordinates were rebuilt at the rejected structure: rebuild
+                    # them where we stay
+                    hx = coords.to_cartesian_hessian(xyz_new, hq)
+                    coords = coordinate_systems.make(
+                        self.coordinates, self.symbols, xyz
+                    )
+                    hq = coords.hessian(xyz, gx, hx)
+                    gq = coords.gradient(xyz, gx)
+                history.append(
+                    {
+                        "rejected": True,
+                        "energy": energy_new,
+                        "trust": trust,
+                        "kind": kind,
+                    }
+                )
                 continue
-            xyz, energy, gradient = xyz_new, energy_new, gradient_new
+            last_step = float(np.max(np.linalg.norm(xyz_new - xyz, axis=1)))
+            xyz, energy, gx, gq = xyz_new, energy_new, gx_new, gq_new
+            # refresh the Hessian from the cheap level when the model keeps failing
+            if self.cheap_hessian_engine is not None and self.refresh != "never":
+                poor = poor + 1 if not 0.5 <= ratio <= 1.5 else 0
+                due = (
+                    n_steps % self.refresh == 0
+                    if isinstance(self.refresh, int)
+                    else poor >= self.refresh_after
+                )
+                if due and not self._converged(gx):
+                    hq = positive_hessian(
+                        coords.hessian(xyz, gx, self._cheap_hessian(xyz))
+                    )
+                    self.n_refreshes += 1
+                    poor = 0
             if ratio > 0.75 and length > 0.8 * trust:
                 trust = min(self.max_trust, 2.0 * trust)
             elif ratio < 0.25:
@@ -180,7 +301,7 @@ class Optimizer:
             history.append(
                 {
                     "energy": energy,
-                    "max_force": _max_force(gradient),
+                    "max_force": _max_force(gx),
                     "trust": trust,
                     "ratio": ratio,
                     "step": length,
@@ -190,16 +311,23 @@ class Optimizer:
         return Result(
             xyz=xyz,
             energy=energy,
-            gradient=gradient,
-            converged=self._converged(gradient),
+            gradient=gx,
+            converged=self._converged(gx),
             n_steps=n_steps,
             n_rejected=n_rejected,
+            n_fallbacks=n_fallbacks,
+            n_rebuilds=n_rebuilds,
+            coordinates=coords.name,
+            last_step=last_step,
             history=history,
         )
 
     # ------------------------------------------------------------------ minimum check
     def _lowest_mode(self, xyz):
-        H = self._computed_hessian(xyz)
+        if self.hessian_engine is not None:
+            H = self._computed_hessian(xyz)
+        else:
+            H = self._cheap_hessian(xyz)
         nu, modes = frequencies(self.symbols, xyz, H)
         k = int(np.argmin(nu))
         return float(nu[k]), modes[:, k].reshape(self.n, 3)
@@ -209,7 +337,8 @@ class Optimizer:
         a saddle point: displace along the imaginary mode both ways, re-minimize each,
         keep the lower; up to escape_rounds rounds."""
         result = self._minimize(self.xyz0)
-        if self.check_minimum and self.hessian_engine is not None and result.converged:
+        checker = self.hessian_engine or self.cheap_hessian_engine
+        if self.check_minimum and checker is not None and result.converged:
             for round_ in range(self.escape_rounds + 1):
                 nu, mode = self._lowest_mode(result.xyz)
                 result.lowest_frequency = nu
@@ -237,9 +366,13 @@ class Optimizer:
                 )
                 best.n_steps += result.n_steps
                 best.n_rejected += result.n_rejected
+                best.n_fallbacks += result.n_fallbacks
+                best.n_rebuilds += result.n_rebuilds
                 result = best
         result.n_gradients = self.n_gradients
         result.n_hessians = self.n_hessians
+        result.n_cheap_hessians = self.n_cheap_hessians
+        result.n_refreshes = self.n_refreshes
         return result
 
 

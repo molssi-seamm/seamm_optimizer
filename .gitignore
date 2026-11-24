@@ -197,4 +197,4 @@ ENV/
 # script (see installer.py), not bundled in the package.
 seamm_thermochemistry/data/thermochemistry.db
 seamm_thermochemistry/data/*_snapshot.csv
-benchmark/mmff_proxy_results.json
+benchmark/mmff_proxy_results*.json
