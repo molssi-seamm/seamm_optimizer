@@ -126,10 +126,21 @@ class Internal:
         hq = self.ic.calcHess(self._bohr(xyz), zero, _to_au_hessian(hx))
         return 0.5 * (hq + hq.T)
 
-    def guess_hessian(self, xyz):
-        """geomeTRIC's own guess (a diagonal Schlegel-type model in the primitives)."""
-        hq = np.asarray(self.ic.guess_hessian(self._bohr(xyz)), float)
-        return 0.5 * (hq + hq.T)
+    def guess_hessian(self, xyz, only=None):
+        """geomeTRIC's own guess (a diagonal Schlegel-type model in the primitives);
+        with `only` (primitive class names, e.g. ("LinearAngle", "OutOfPlane")), just
+        those primitives' terms."""
+        if only is None:
+            hq = np.asarray(self.ic.guess_hessian(self._bohr(xyz)), float)
+            return 0.5 * (hq + hq.T)
+        prims = self.ic.Prims if hasattr(self.ic, "Prims") else self.ic
+        hprim = np.asarray(prims.guess_hessian(self._bohr(xyz)), float)
+        keep = np.array([type(ic).__name__ in only for ic in prims.Internals], float)
+        hprim = hprim * keep[:, None] * keep[None, :]
+        if hasattr(self.ic, "Vecs"):
+            V = np.asarray(self.ic.Vecs)
+            hprim = V.T @ hprim @ V
+        return 0.5 * (hprim + hprim.T)
 
     def B(self, xyz):
         return np.asarray(self.ic.wilsonB(self._bohr(xyz)), float)

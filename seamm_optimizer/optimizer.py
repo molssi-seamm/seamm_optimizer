@@ -7,9 +7,15 @@ back-transformation with a Cartesian fallback, and a check that the end point is
 minimum, with an escape from a saddle point.
 
 The engine is any callable ``engine(xyz) -> (energy, gradient)`` with xyz an N x 3
-array in Å, the energy in eV and the gradient N x 3 in eV/Å. A Hessian engine,
-``hessian_engine(xyz) -> 3N x 3N`` in eV/Å^2, is optional: it is used for the starting
-Hessian (hessian="computed") and for the minimum check.
+array in Å, the energy in eV and the gradient N x 3 in eV/Å. Two Hessian engines,
+each ``(xyz) -> 3N x 3N`` in eV/Å^2, are optional:
+
+- ``hessian_engine``, at the expensive level: the starting Hessian with
+  hessian="computed", and the minimum check;
+- ``cheap_hessian_engine``, at a cheap level (PM7, GFN2-xTB, an MLFF, a force field):
+  the starting Hessian with hessian="cheap", refreshed when the quadratic model keeps
+  predicting the energy change badly (`refresh`), and the minimum check when there is
+  no expensive one (proposal §5).
 
 Convergence is the shared criterion of the benchmark: the largest force on any atom
 at most `fmax` (default 0.0015 eV/Å, the CBH criterion).
@@ -23,7 +29,7 @@ import numpy as np
 from . import coordinates as coordinate_systems
 from .geometry import frequencies
 from .model_hessian import HARTREE, lindh_hessian
-from .steps import bfgs_update, rfo_step
+from .steps import bfgs_update, positive_hessian, rfo_step
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +45,8 @@ class Result:
     converged: bool
     n_gradients: int = 0
     n_hessians: int = 0
+    n_cheap_hessians: int = 0
+    n_refreshes: int = 0
     n_steps: int = 0
     n_rejected: int = 0
     n_fallbacks: int = 0
@@ -67,13 +75,22 @@ class Optimizer:
         Converged when the largest atomic force is at most this (eV/Å).
     max_steps : int
         Default 50 + 12 N.
-    hessian : "lindh" | "geometric" | "identity" | "computed" | array | callable
+    hessian : "lindh" | "geometric" | "cheap" | "identity" | "computed" | array |
+        callable
         The starting Hessian: Lindh's model, geomeTRIC's guess (internal coordinates
-        only), ASE's scaled identity, the Hessian engine's, a given 3N x 3N array, or
-        ``callable(symbols, xyz)``.
+        only), the cheap Hessian engine's, ASE's scaled identity, the expensive
+        Hessian engine's, a given 3N x 3N array, or ``callable(symbols, xyz)``.
     hessian_engine : callable, optional
-        ``hessian_engine(xyz) -> 3N x 3N (eV/Å^2)``, for "computed" and the minimum
-        check.
+        ``hessian_engine(xyz) -> 3N x 3N (eV/Å^2)`` at the expensive level, for
+        "computed" and the minimum check.
+    cheap_hessian_engine : callable, optional
+        The same at a cheap level, for "cheap", refreshes and (without an expensive
+        one) the minimum check.
+    refresh : "adaptive" | "never" | int
+        With a cheap Hessian engine: recompute the Hessian after `refresh_after` steps
+        in a row whose actual energy change disagreed with the prediction (ratio
+        outside 0.5-1.5), or every `refresh` steps when an int.
+    refresh_after : int
     coordinates : str
         "TRIC" (default), "DLC", "HDLC", "primitive" or "cartesian".
     trust, max_trust, min_trust : float
@@ -97,6 +114,9 @@ class Optimizer:
         max_steps=None,
         hessian="lindh",
         hessian_engine=None,
+        cheap_hessian_engine=None,
+        refresh="adaptive",
+        refresh_after=3,
         coordinates="TRIC",
         trust=0.5,
         max_trust=1.0,
@@ -114,6 +134,9 @@ class Optimizer:
         self.max_steps = max_steps if max_steps is not None else 50 + 12 * self.n
         self.hessian = hessian
         self.hessian_engine = hessian_engine
+        self.cheap_hessian_engine = cheap_hessian_engine
+        self.refresh = refresh
+        self.refresh_after = refresh_after
         self.coordinates = coordinates
         self.trust0 = trust
         self.max_trust = max_trust
@@ -124,6 +147,8 @@ class Optimizer:
         self.escape_rounds = escape_rounds
         self.n_gradients = 0
         self.n_hessians = 0
+        self.n_cheap_hessians = 0
+        self.n_refreshes = 0
 
     # ------------------------------------------------------------------ engines
     def _evaluate(self, xyz):
@@ -138,6 +163,13 @@ class Optimizer:
         H = np.asarray(self.hessian_engine(xyz), float)
         return 0.5 * (H + H.T)
 
+    def _cheap_hessian(self, xyz):
+        if self.cheap_hessian_engine is None:
+            raise ValueError("hessian='cheap' needs a cheap_hessian_engine")
+        self.n_cheap_hessians += 1
+        H = np.asarray(self.cheap_hessian_engine(xyz), float)
+        return 0.5 * (H + H.T)
+
     def _starting_hessian(self, xyz):
         choice = self.hessian
         if isinstance(choice, np.ndarray):
@@ -150,6 +182,8 @@ class Optimizer:
             return ASE_IDENTITY * np.eye(3 * self.n)
         if choice == "computed":
             return self._computed_hessian(xyz)
+        if choice == "cheap":
+            return self._cheap_hessian(xyz)
         raise ValueError(f"Unknown starting Hessian {choice!r}")
 
     def _converged(self, gradient):
@@ -169,9 +203,11 @@ class Optimizer:
             hq = coords.guess_hessian(xyz)
         else:
             hq = coords.hessian(xyz, gx, self._starting_hessian(xyz))
+            if self.hessian in ("cheap", "computed"):
+                hq = positive_hessian(hq)
         trust = self.trust0
         history = [{"energy": energy, "max_force": _max_force(gx), "trust": trust}]
-        n_steps = n_rejected = n_fallbacks = n_rebuilds = 0
+        n_steps = n_rejected = n_fallbacks = n_rebuilds = poor = 0
         while not self._converged(gx) and n_steps < self.max_steps:
             n_steps += 1
             null = coords.rigid(xyz)
@@ -241,6 +277,20 @@ class Optimizer:
                 )
                 continue
             xyz, energy, gx, gq = xyz_new, energy_new, gx_new, gq_new
+            # refresh the Hessian from the cheap level when the model keeps failing
+            if self.cheap_hessian_engine is not None and self.refresh != "never":
+                poor = poor + 1 if not 0.5 <= ratio <= 1.5 else 0
+                due = (
+                    n_steps % self.refresh == 0
+                    if isinstance(self.refresh, int)
+                    else poor >= self.refresh_after
+                )
+                if due and not self._converged(gx):
+                    hq = positive_hessian(
+                        coords.hessian(xyz, gx, self._cheap_hessian(xyz))
+                    )
+                    self.n_refreshes += 1
+                    poor = 0
             if ratio > 0.75 and length > 0.8 * trust:
                 trust = min(self.max_trust, 2.0 * trust)
             elif ratio < 0.25:
@@ -270,7 +320,10 @@ class Optimizer:
 
     # ------------------------------------------------------------------ minimum check
     def _lowest_mode(self, xyz):
-        H = self._computed_hessian(xyz)
+        if self.hessian_engine is not None:
+            H = self._computed_hessian(xyz)
+        else:
+            H = self._cheap_hessian(xyz)
         nu, modes = frequencies(self.symbols, xyz, H)
         k = int(np.argmin(nu))
         return float(nu[k]), modes[:, k].reshape(self.n, 3)
@@ -280,7 +333,8 @@ class Optimizer:
         a saddle point: displace along the imaginary mode both ways, re-minimize each,
         keep the lower; up to escape_rounds rounds."""
         result = self._minimize(self.xyz0)
-        if self.check_minimum and self.hessian_engine is not None and result.converged:
+        checker = self.hessian_engine or self.cheap_hessian_engine
+        if self.check_minimum and checker is not None and result.converged:
             for round_ in range(self.escape_rounds + 1):
                 nu, mode = self._lowest_mode(result.xyz)
                 result.lowest_frequency = nu
@@ -313,6 +367,8 @@ class Optimizer:
                 result = best
         result.n_gradients = self.n_gradients
         result.n_hessians = self.n_hessians
+        result.n_cheap_hessians = self.n_cheap_hessians
+        result.n_refreshes = self.n_refreshes
         return result
 
 

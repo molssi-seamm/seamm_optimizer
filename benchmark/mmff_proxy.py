@@ -91,6 +91,44 @@ def mmff_engine(symbols, xyz, charge):
     return engine, hessian, calls
 
 
+def uff_hessian_engine(symbols, xyz, charge):
+    """A cheap level for the proxy: UFF's Hessian (central differences of UFF
+    gradients, a fresh force field per geometry), or None if UFF cannot type it.
+    MMFF94 plays the expensive level, UFF a cheaper, different one (as PM7 or GFN2-xTB
+    against DFT)."""
+    block = f"{len(symbols)}\n\n" + "\n".join(
+        f"{s} {x:.6f} {y:.6f} {z:.6f}" for s, (x, y, z) in zip(symbols, xyz)
+    )
+    mol = Chem.MolFromXYZBlock(block)
+    try:
+        rdDetermineBonds.DetermineBonds(mol, charge=charge)
+        Chem.SanitizeMol(mol)
+        if not AllChem.UFFHasAllMoleculeParams(mol):
+            return None
+    except Exception:
+        return None
+
+    def gradient(x):
+        m = Chem.Mol(mol)
+        conf = m.GetConformer()
+        for i, p in enumerate(np.asarray(x, float).reshape(-1, 3)):
+            conf.SetAtomPosition(i, p.tolist())
+        ff = AllChem.UFFGetMoleculeForceField(m)
+        return np.array(ff.CalcGrad()) * KCAL_EV
+
+    def hessian(x, h=1.0e-4):
+        x0 = np.asarray(x, float).ravel()
+        H = np.zeros((len(x0), len(x0)))
+        for k in range(len(x0)):
+            xp, xm = x0.copy(), x0.copy()
+            xp[k] += h
+            xm[k] -= h
+            H[k] = (gradient(xp) - gradient(xm)) / (2 * h)
+        return 0.5 * (H + H.T)
+
+    return hessian
+
+
 def ase_bfgs(engine, symbols, xyz, fmax=0.0015, steps=5000):
     from ase import Atoms
     from ase.calculators.calculator import Calculator, all_changes
@@ -163,6 +201,11 @@ VARIANTS = {
     "cartesian": {"coordinates": "cartesian", "hessian": "lindh"},
     "cart-identity": {"coordinates": "cartesian", "hessian": "identity"},
     "TRIC-geoguess": {"coordinates": "TRIC", "hessian": "geometric"},
+    # phase 3: the cheap level's Hessian (UFF here) at the start, refreshed adaptively
+    "TRIC-cheap": {"coordinates": "TRIC", "hessian": "cheap", "cheap": True},
+    "TRIC-cheap-norefresh": {"coordinates": "TRIC", "hessian": "cheap", "cheap": True, "refresh": "never"},
+    "TRIC-cheap-every5": {"coordinates": "TRIC", "hessian": "cheap", "cheap": True, "refresh": 5},
+    "TRIC-exact": {"coordinates": "TRIC", "hessian": "computed"},
 }
 
 
@@ -179,12 +222,19 @@ def main(names, variants=("TRIC", "cartesian"), baselines=("ase", "geometric"), 
             if perturb:
                 xyz = xyz + perturb * rng.normal(size=xyz.shape)
             row = {"set": name, "key": key, "natoms": len(symbols)}
+            cheap = uff_hessian_engine(symbols, xyz, charge)
             for label in variants:
+                kw = dict(VARIANTS[label])
+                if kw.pop("cheap", False):
+                    if cheap is None:
+                        continue
+                    kw["cheap_hessian_engine"] = cheap
                 calls[0] = 0
                 t = time.time()
-                r = Optimizer(engine, symbols, xyz, hessian_engine=hessian, **VARIANTS[label]).run()
+                r = Optimizer(engine, symbols, xyz, hessian_engine=hessian, **kw).run()
                 row[label] = {"grads": r.n_gradients, "converged": r.converged, "E": r.energy,
                               "minimum": r.minimum, "escapes": len(r.escapes), "fallbacks": r.n_fallbacks,
+                              "cheap hessians": r.n_cheap_hessians, "refreshes": r.n_refreshes,
                               "s": round(time.time() - t, 2)}
             if "ase" in baselines:
                 calls[0] = 0
@@ -215,6 +265,7 @@ def main(names, variants=("TRIC", "cartesian"), baselines=("ase", "geometric"), 
         if label in VARIANTS:
             summary[label]["minimum"] = sum(bool(r[label]["minimum"]) for r in rs)
             summary[label]["fallbacks"] = sum(r[label]["fallbacks"] for r in rs)
+            summary[label]["cheap hessians"] = sum(r[label].get("cheap hessians", 0) for r in rs)
         for s_name in names:
             sub = sorted(r[label]["grads"] for r in rs if r["set"] == s_name)
             if sub:

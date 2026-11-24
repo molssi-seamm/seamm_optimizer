@@ -90,3 +90,18 @@ def bfgs_update(H, s, y, null=None):
     Hs = H @ s
     H = H + np.outer(y, y) / sy - np.outer(Hs, Hs) / float(s @ Hs)
     return 0.5 * (H + H.T), True
+
+
+#: the eigenvalue floor (atomic units) for computed Hessians used in minimization
+HESSIAN_FLOOR = 0.005
+
+
+def positive_hessian(H, floor=HESSIAN_FLOOR, zero=1.0e-6):
+    """A computed Hessian made fit for minimization: eigenvalues below `floor` are
+    raised to it, except the near-zero ones (|w| < zero, the rigid-body directions,
+    which the steps project out). A Hessian computed away from its own minimum has
+    negative eigenvalues; clamped, a UFF Hessian on the MMFF proxy took 352 gradients
+    over 25 CHNO PM7 starts against 504 raw (abs values: 418; Design 2026-11-24)."""
+    w, v = np.linalg.eigh(0.5 * (H + H.T))
+    w = np.where(np.abs(w) < zero, w, np.maximum(w, floor))
+    return (v * w) @ v.T
