@@ -6,7 +6,8 @@ the effect of the Hessian from the step) with ASE's BFGS, all stopping at the sh
 0.0015 eV/Å. Reports gradients to converge, success, energy differences, and whether
 the end point is a minimum (finite-difference MMFF Hessian, not counted).
 
-Usage: python benchmark/mmff_proxy.py [set ...]   (sets from ~/Work/SEAMM/optimizer_benchmark/sets)
+Usage: python benchmark/mmff_proxy.py [set or file.sdf ...] [--variants=TRIC,TRIC-cheap] [--tag=name]
+       [--perturb=Å]   (sets from ~/Work/SEAMM/optimizer_benchmark/sets)
 """
 
 import json
@@ -209,11 +210,11 @@ VARIANTS = {
 }
 
 
-def main(names, variants=("TRIC", "cartesian"), baselines=("ase", "geometric"), perturb=0.0):
+def main(names, variants=("TRIC", "cartesian"), baselines=("ase", "geometric"), perturb=0.0, tag=""):
     rng = np.random.default_rng(20261124)
     rows = []
     for name in names:
-        for key, symbols, xyz, charge in read_sdf(SETS / f"{name}.sdf"):
+        for key, symbols, xyz, charge in read_sdf(Path(name) if name.endswith(".sdf") else SETS / f"{name}.sdf"):
             built = mmff_engine(symbols, xyz, charge)
             if built is None:
                 rows.append({"set": name, "key": key, "skipped": "MMFF cannot type"})
@@ -271,7 +272,7 @@ def main(names, variants=("TRIC", "cartesian"), baselines=("ase", "geometric"), 
             if sub:
                 summary[label][f"{s_name} mean/median"] = (round(statistics.mean(sub), 1), statistics.median(sub))
     summary["skipped"] = [r["key"] for r in rows if "skipped" in r]
-    tag = f"_p{perturb:g}" if perturb else ""
+    tag = (f"_{tag}" if tag else "") + (f"_p{perturb:g}" if perturb else "")
     out = Path(__file__).with_name(f"mmff_proxy_results{tag}.json")
     out.write_text(json.dumps({"rows": rows, "summary": summary}, indent=1, default=float))
     print(json.dumps(summary, indent=1))
@@ -281,4 +282,6 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     perturb = float(next((a.split("=")[1] for a in args if a.startswith("--perturb=")), 0.0))
     names = [a for a in args if not a.startswith("--")] or ["fragments", "breadth", "failures", "chno"]
-    main(names, perturb=perturb)
+    tag = next((a.split("=")[1] for a in args if a.startswith("--tag=")), "")
+    variants = next((a.split("=")[1].split(",") for a in args if a.startswith("--variants=")), ("TRIC", "cartesian"))
+    main(names, variants=variants, perturb=perturb, tag=tag)
