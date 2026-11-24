@@ -198,3 +198,4 @@ ENV/
 seamm_thermochemistry/data/thermochemistry.db
 seamm_thermochemistry/data/*_snapshot.csv
 benchmark/mmff_proxy_results*.json
+benchmark/xtb_proxy_results*.json
