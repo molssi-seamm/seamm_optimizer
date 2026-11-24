@@ -1,0 +1,53 @@
+seamm\_optimizer package
+========================
+
+Submodules
+----------
+
+seamm\_optimizer.coordinates module
+-----------------------------------
+
+.. automodule:: seamm_optimizer.coordinates
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+seamm\_optimizer.geometry module
+--------------------------------
+
+.. automodule:: seamm_optimizer.geometry
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+seamm\_optimizer.model\_hessian module
+--------------------------------------
+
+.. automodule:: seamm_optimizer.model_hessian
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+seamm\_optimizer.optimizer module
+---------------------------------
+
+.. automodule:: seamm_optimizer.optimizer
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+seamm\_optimizer.steps module
+-----------------------------
+
+.. automodule:: seamm_optimizer.steps
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+Module contents
+---------------
+
+.. automodule:: seamm_optimizer
+   :members:
+   :show-inheritance:
+   :undoc-members:
