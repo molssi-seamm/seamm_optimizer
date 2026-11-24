@@ -16,6 +16,7 @@ environment), so this environment needs no tblite:
 """
 
 import json
+import os
 import statistics
 import subprocess
 import sys
@@ -28,7 +29,7 @@ from rdkit import Chem
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import mmff_proxy as mp  # noqa: E402
-from seamm_optimizer import Optimizer  # noqa: E402
+from seamm_optimizer import Optimizer, SurrogateOptimizer  # noqa: E402
 
 HARTREE = 27.211386245988  # eV
 BOHR = 0.529177210903  # Å
@@ -41,8 +42,10 @@ class Tblite:
     """A persistent tblite worker process."""
 
     def __init__(self, python=TBLITE_PYTHON):
+        env = dict(os.environ, OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
         self.process = subprocess.Popen(
             [str(python), str(Path(__file__).with_name("tblite_worker.py"))],
+            env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             text=True,
@@ -76,6 +79,13 @@ def levels(tb, symbols, charge):
         r = tb.request(op="gradient", method="GFN2-xTB", xyz=np.asarray(x).tolist(), **common)
         return r["energy"] * HARTREE, np.array(r["gradient"]) * HARTREE / BOHR
 
+    def gradient_of(method):
+        def gradient(x):
+            r = tb.request(op="gradient", method=method, xyz=np.asarray(x).tolist(), **common)
+            return r["energy"] * HARTREE, np.array(r["gradient"]) * HARTREE / BOHR
+
+        return gradient
+
     def hessian_of(method):
         def hessian(x):
             r = tb.request(op="hessian", method=method, xyz=np.asarray(x).tolist(), **common)
@@ -83,6 +93,7 @@ def levels(tb, symbols, charge):
 
         return hessian
 
+    levels.gfn1_gradient = gradient_of("GFN1-xTB")
     return engine, hessian_of("GFN2-xTB"), hessian_of("GFN1-xTB"), calls
 
 
@@ -92,6 +103,10 @@ VARIANTS = {
     "TRIC-mmff": {"coordinates": "TRIC", "hessian": "cheap", "cheap": "mmff"},
     "TRIC-gfn1": {"coordinates": "TRIC", "hessian": "cheap", "cheap": "gfn1"},
     "TRIC-exact": {"coordinates": "TRIC", "hessian": "computed"},
+    # phase 4: the cheap level carries the steps (SurrogateOptimizer)
+    "SUR-gfn1": {"surrogate": "gfn1", "variant": "delta-hessian"},
+    "SUR-gfn1-dg": {"surrogate": "gfn1", "variant": "delta-gradient"},
+    "SUR-mmff": {"surrogate": "mmff", "variant": "delta-hessian"},
 }
 
 
@@ -107,6 +122,26 @@ def main(paths, variants=("TRIC", "TRIC-mmff", "TRIC-gfn1", "TRIC-exact"),
                 row = {"set": Path(path).stem, "key": key, "natoms": len(symbols)}
                 for label in variants:
                     kw = dict(VARIANTS[label])
+                    if "surrogate" in kw:
+                        which = kw.pop("surrogate")
+                        if which == "mmff":
+                            if mmff is None:
+                                continue
+                            sur = mmff[0]
+                        else:
+                            sur = levels.gfn1_gradient
+                        calls[0] = 0
+                        t = time.time()
+                        try:
+                            r = SurrogateOptimizer(engine, sur, symbols, xyz, hessian_engine=hessian, **kw).run()
+                        except Exception as e:  # noqa: BLE001 - record and go on
+                            row[label] = {"grads": calls[0], "converged": False, "E": None, "error": str(e)}
+                            continue
+                        row[label] = {"grads": r.n_gradients, "cheap grads": r.n_cheap_gradients,
+                                      "converged": r.converged, "E": r.energy, "minimum": r.minimum,
+                                      "lowest": r.lowest_frequency, "rejected": r.n_rejected,
+                                      "escapes": 0, "fallbacks": 0, "s": round(time.time() - t, 1)}
+                        continue
                     cheap = kw.pop("cheap", None)
                     if cheap == "mmff":
                         if mmff is None:
