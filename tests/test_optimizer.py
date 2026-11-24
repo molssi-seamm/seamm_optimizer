@@ -168,3 +168,34 @@ def _with_positions(mol, xyz):
     for i, p in enumerate(xyz):
         conf.SetAtomPosition(i, [float(v) for v in p])
     return mol
+
+
+def test_lindh_leaves_out_near_linear_torsions():
+    """Lindh's rho-weighted torsions include non-bonded pairs. In cumene the
+    isopropyl C, the ipso C, the para C and its H are collinear, and torsions through
+    those near-linear angles (B vectors ~ 1/sin) made the model ~300x too stiff along
+    the para C (38 gradients on GFN2-xTB instead of 7). A real stretch is ~30-60
+    eV/Å^2; Lindh's largest eigenvalue for cumene is now ~210."""
+    from rdkit import Chem
+    from rdkit.Chem import AllChem
+
+    mol = Chem.AddHs(Chem.MolFromSmiles("CC(C)c1ccccc1"))
+    AllChem.EmbedMolecule(mol, randomSeed=7)
+    AllChem.MMFFOptimizeMolecule(mol)
+    symbols = [a.GetSymbol() for a in mol.GetAtoms()]
+    xyz = mol.GetConformer().GetPositions()
+    assert np.linalg.eigvalsh(lindh_hessian(symbols, xyz)).max() < 400.0
+
+
+def test_lindh_gives_both_bends_of_a_linear_angle():
+    """A linear (or near-linear) angle bends in two directions; an ordinary bend
+    describes one. Without the other, HC#CI took 54 gradients on GFN2-xTB and NCCCCN
+    105 (now 6 each). Both bends of CO2 have curvature in the model."""
+    symbols = ["O", "C", "O"]
+    xyz = np.array([[-1.16, 0.0, 0.0], [0.0, 0.0, 0.0], [1.16, 0.0, 0.0]])
+    H = lindh_hessian(symbols, xyz)
+    Q = rigid_modes(xyz)
+    P = np.eye(9) - Q @ Q.T
+    w = np.linalg.eigvalsh(P @ H @ P)
+    assert np.sum(w > 1.0e-3) == 4  # two stretches and two bends (3N - 5 = 4)
+    assert np.abs(H @ Q).max() < 1e-6
