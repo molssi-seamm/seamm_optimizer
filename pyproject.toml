@@ -22,6 +22,7 @@ requires-python = ">=3.9"
 # Pure bookkeeping -- no quantum-chemistry, no SEAMM-core, no molsystem
 # dependency by design (see the architecture doc). No runtime dependencies.
 dependencies = [
+    "geometric",
     "numpy",
     "scipy",
 ]
