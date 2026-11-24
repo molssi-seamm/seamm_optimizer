@@ -255,11 +255,13 @@ class Optimizer:
                 # the curvature information is valid whether or not the step is kept
                 hq, _ = bfgs_update(hq, step, gq_new - gq, null=null)
             length = float(np.linalg.norm(step))
-            # a rise beyond numerical noise is rejected; tiny rises near convergence
-            # are accepted (the gradient is what is converged)
-            if energy_new - energy > 1.0e-6 and ratio < 0.0:
+            # Only a step much worse than predicted (ratio < -1) is rejected, as in
+            # geomeTRIC: rejecting every small rise cost a gradient each time and,
+            # with the trust cut to the step, made the optimizer crawl (Design
+            # 2026-11-24, MMFF proxy: an exact Hessian took 20 gradients against 15)
+            if energy_new - energy > 1.0e-6 and ratio < -1.0:
                 n_rejected += 1
-                trust = max(self.min_trust, 0.25 * length)
+                trust = max(self.min_trust, 0.5 * min(trust, length))
                 if kind == "Cartesian fallback":
                     # the coordinates were rebuilt at the rejected structure: rebuild
                     # them where we stay
@@ -294,10 +296,12 @@ class Optimizer:
                     )
                     self.n_refreshes += 1
                     poor = 0
-            if ratio > 0.75 and length > 0.8 * trust:
-                trust = min(self.max_trust, 2.0 * trust)
+            # good steps grow the trust radius, poor ones halve it (from the smaller
+            # of the radius and the step), okay ones leave it
+            if ratio > 0.75:
+                trust = min(self.max_trust, np.sqrt(2.0) * trust)
             elif ratio < 0.25:
-                trust = max(self.min_trust, 0.25 * length)
+                trust = max(self.min_trust, 0.5 * min(trust, length))
             history.append(
                 {
                     "energy": energy,
