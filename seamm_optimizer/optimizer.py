@@ -33,6 +33,9 @@ from .steps import bfgs_update, positive_hessian, rfo_step
 
 logger = logging.getLogger(__name__)
 
+#: how many recent steps judge a refreshed Hessian
+REFRESH_PAIRS = 5
+
 #: ASE BFGS's starting Hessian, a scaled identity, kept for comparisons
 ASE_IDENTITY = 70.0  # eV/Å^2
 
@@ -47,6 +50,7 @@ class Result:
     n_hessians: int = 0
     n_cheap_hessians: int = 0
     n_refreshes: int = 0
+    n_refreshes_declined: int = 0
     n_steps: int = 0
     n_rejected: int = 0
     n_fallbacks: int = 0
@@ -159,6 +163,7 @@ class Optimizer:
         self.n_hessians = 0
         self.n_cheap_hessians = 0
         self.n_refreshes = 0
+        self.n_refreshes_declined = 0
 
     # ------------------------------------------------------------------ engines
     def _evaluate(self, xyz):
@@ -218,6 +223,9 @@ class Optimizer:
         trust = self.trust0
         history = [{"energy": energy, "max_force": _max_force(gx), "trust": trust}]
         n_steps = n_rejected = n_fallbacks = n_rebuilds = poor = 0
+        # the recent steps and gradient changes in the current coordinates, for
+        # judging a refreshed Hessian (cleared when the coordinates are rebuilt)
+        pairs = []
         last_step = 0.0
         while not self._converged(gx) and n_steps < self.max_steps:
             n_steps += 1
@@ -251,6 +259,7 @@ class Optimizer:
                     self.coordinates, self.symbols, xyz_new
                 )
                 n_rebuilds += 1
+                pairs = []
                 hq = coords.hessian(xyz_new, gx_new, hx)
                 gq_new = coords.gradient(xyz_new, gx_new)
                 gq_old = coords.gradient(xyz, gx)
@@ -263,6 +272,7 @@ class Optimizer:
                 step = coords.difference(xyz_new, xyz)
                 # the curvature information is valid whether or not the step is kept
                 hq, _ = bfgs_update(hq, step, gq_new - gq, null=null)
+                pairs = (pairs + [(step, gq_new - gq)])[-REFRESH_PAIRS:]
             length = float(np.linalg.norm(step))
             # Only a step much worse than predicted (ratio < -1) is rejected, as in
             # geomeTRIC: rejecting every small rise cost a gradient each time and,
@@ -280,6 +290,7 @@ class Optimizer:
                     )
                     hq = coords.hessian(xyz, gx, hx)
                     gq = coords.gradient(xyz, gx)
+                    pairs = []
                 history.append(
                     {
                         "rejected": True,
@@ -300,10 +311,7 @@ class Optimizer:
                     else poor >= self.refresh_after
                 )
                 if due and not self._converged(gx):
-                    hq = positive_hessian(
-                        coords.hessian(xyz, gx, self._cheap_hessian(xyz))
-                    )
-                    self.n_refreshes += 1
+                    hq = self._refreshed(coords, xyz, gx, hq, pairs)
                     poor = 0
             # good steps grow the trust radius, poor ones halve it (from the smaller
             # of the radius and the step), okay ones leave it
@@ -336,6 +344,31 @@ class Optimizer:
         )
 
     # ------------------------------------------------------------------ minimum check
+    def _refreshed(self, coords, xyz, gx, hq, pairs):
+        """The Hessian after a refresh from the cheap level: the cheap Hessian with
+        the recent BFGS updates replayed on it, but only if it reproduces those
+        steps' gradient changes better than the current model; otherwise the current
+        model. A cheap level that disagrees with the expensive one (MMFF under
+        GFN2-xTB) was refreshed 4 times and threw away what BFGS had learned: 26
+        gradients against 20 with Lindh's model alone (Design 2026-11-24)."""
+        null = coords.rigid(xyz)
+        candidate = positive_hessian(coords.hessian(xyz, gx, self._cheap_hessian(xyz)))
+        for s, y in pairs:
+            candidate, _ = bfgs_update(candidate, s, y, null=null)
+        if pairs:
+            P = np.eye(len(hq)) - null @ null.T if null.shape[1] else np.eye(len(hq))
+
+            def misfit(H):
+                return sum(
+                    float(np.linalg.norm(P @ (H @ s - y)) ** 2) for s, y in pairs
+                )
+
+            if misfit(candidate) >= misfit(hq):
+                self.n_refreshes_declined += 1
+                return hq
+        self.n_refreshes += 1
+        return candidate
+
     def _minimum_check(self, xyz):
         """(lowest frequency in cm^-1, the Cartesian mode to escape along or None).
 
@@ -414,6 +447,7 @@ class Optimizer:
         result.n_hessians = self.n_hessians
         result.n_cheap_hessians = self.n_cheap_hessians
         result.n_refreshes = self.n_refreshes
+        result.n_refreshes_declined = self.n_refreshes_declined
         result.confirmations = self.confirmations
         return result
 

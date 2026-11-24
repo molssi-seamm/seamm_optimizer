@@ -67,7 +67,9 @@ def test_a_fixed_refresh_interval_refreshes():
         check_minimum=False,
     ).run()
     assert r.converged
-    assert r.n_refreshes == r.n_cheap_hessians - 1 > 0
+    # every refresh is computed; it is adopted, or declined when the BFGS-updated
+    # model fits the recent steps better
+    assert r.n_refreshes + r.n_refreshes_declined == r.n_cheap_hessians - 1 > 0
 
 
 def test_the_minimum_check_uses_the_cheap_hessian_without_an_expensive_one():
@@ -143,3 +145,22 @@ def test_an_imaginary_mode_the_expensive_level_confirms_is_escaped_from():
     nu, mode = opt._minimum_check(xyz)
     assert nu < -30.0 and mode is not None
     assert opt.confirmations[0]["expensive"] < -30.0
+
+
+def test_a_refresh_that_fits_the_recent_steps_worse_is_declined():
+    """A cheap level that disagrees with the expensive one should not overwrite what
+    the BFGS updates learned: a refresh is adopted only if it reproduces the recent
+    gradient changes better (MMFF under GFN2-xTB: 26 -> 15 gradients for one
+    fragment). Here the "cheap" Hessian is badly wrong (a stiff scaled identity)."""
+    m = MMFF("CCCCCCO")
+    x = _perturbed(m, 0.2)
+    n = 3 * len(m.symbols)
+
+    def wrong(xyz):
+        return 50.0 * np.eye(n)
+
+    kw = dict(hessian="lindh", cheap_hessian_engine=wrong, check_minimum=False)
+    guarded = Optimizer(m.engine, m.symbols, x, refresh=2, **kw).run()
+    never = Optimizer(m.engine, m.symbols, x, refresh="never", **kw).run()
+    assert guarded.converged and guarded.n_refreshes_declined > 0
+    assert guarded.n_gradients <= never.n_gradients + 2

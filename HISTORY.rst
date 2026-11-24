@@ -7,6 +7,11 @@ History
       minimum of an amine is a ~180i saddle on GFN2-xTB: escaping along that mode
       twice both ways took 6x the gradients and ended "not a minimum". On the fragment
       pilot at PM7 with GFN2-xTB Hessians: 179 -> 81 evaluations (Lindh alone: 110).
+    * A refreshed cheap Hessian (with the recent BFGS updates replayed on it) is used
+      only if it reproduces the recent steps' gradient changes better than the
+      current model; otherwise it is declined. A cheap level that disagrees with the
+      expensive one no longer overwrites what the updates learned (MMFF under
+      GFN2-xTB: 26 -> 15 gradients for one fragment, below Lindh's 20).
 
 2026.11.24.1 -- Bugfix: Lindh's model Hessian for near-linear arrangements
     * Torsions through near-linear angles are left out of Lindh's model Hessian, as
