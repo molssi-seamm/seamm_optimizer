@@ -52,6 +52,7 @@ class Result:
     n_fallbacks: int = 0
     n_rebuilds: int = 0
     coordinates: str = ""
+    last_step: float = 0.0
     minimum: bool | None = None
     lowest_frequency: float | None = None
     escapes: list = field(default_factory=list)
@@ -208,6 +209,7 @@ class Optimizer:
         trust = self.trust0
         history = [{"energy": energy, "max_force": _max_force(gx), "trust": trust}]
         n_steps = n_rejected = n_fallbacks = n_rebuilds = poor = 0
+        last_step = 0.0
         while not self._converged(gx) and n_steps < self.max_steps:
             n_steps += 1
             null = coords.rigid(xyz)
@@ -276,6 +278,7 @@ class Optimizer:
                     }
                 )
                 continue
+            last_step = float(np.max(np.linalg.norm(xyz_new - xyz, axis=1)))
             xyz, energy, gx, gq = xyz_new, energy_new, gx_new, gq_new
             # refresh the Hessian from the cheap level when the model keeps failing
             if self.cheap_hessian_engine is not None and self.refresh != "never":
@@ -315,6 +318,7 @@ class Optimizer:
             n_fallbacks=n_fallbacks,
             n_rebuilds=n_rebuilds,
             coordinates=coords.name,
+            last_step=last_step,
             history=history,
         )
 
