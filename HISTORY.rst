@@ -1,6 +1,13 @@
 =======
 History
 =======
+2026.11.24.2 -- Bugfix: a minimum check at the cheap level escaped from minima
+    * When only the cheap level's Hessian checks the end point, an imaginary mode it
+      shows is first confirmed from two expensive gradients displaced along it. PM7's
+      minimum of an amine is a ~180i saddle on GFN2-xTB: escaping along that mode
+      twice both ways took 6x the gradients and ended "not a minimum". On the fragment
+      pilot at PM7 with GFN2-xTB Hessians: 179 -> 81 evaluations (Lindh alone: 110).
+
 2026.11.24.1 -- Bugfix: Lindh's model Hessian for near-linear arrangements
     * Torsions through near-linear angles are left out of Lindh's model Hessian, as
       geomeTRIC leaves out such dihedrals. The model's torsions include non-bonded

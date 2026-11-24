@@ -27,7 +27,7 @@ import logging
 import numpy as np
 
 from . import coordinates as coordinate_systems
-from .geometry import frequencies
+from .geometry import _EV_A2_AMU_TO_CM2, frequencies
 from .model_hessian import HARTREE, lindh_hessian
 from .steps import bfgs_update, positive_hessian, rfo_step
 
@@ -56,6 +56,7 @@ class Result:
     minimum: bool | None = None
     lowest_frequency: float | None = None
     escapes: list = field(default_factory=list)
+    confirmations: list = field(default_factory=list)
     history: list = field(default_factory=list)
 
     @property
@@ -104,6 +105,11 @@ class Optimizer:
     escape_displacement : float
         The largest atomic displacement (Å) along the imaginary mode.
     escape_rounds : int
+        How many times to escape from a saddle point at most.
+    confirm_displacement : float
+        The largest atomic displacement (Å) for confirming, from expensive gradients,
+        an imaginary mode that only the cheap level's Hessian shows (two gradients
+        per mode), before escaping along it.
     """
 
     def __init__(
@@ -126,6 +132,7 @@ class Optimizer:
         imaginary_threshold=30.0,
         escape_displacement=0.3,
         escape_rounds=2,
+        confirm_displacement=0.02,
     ):
         self.engine = engine
         self.symbols = list(symbols)
@@ -146,6 +153,8 @@ class Optimizer:
         self.imaginary_threshold = imaginary_threshold
         self.escape_displacement = escape_displacement
         self.escape_rounds = escape_rounds
+        self.confirm_displacement = confirm_displacement
+        self.confirmations = []
         self.n_gradients = 0
         self.n_hessians = 0
         self.n_cheap_hessians = 0
@@ -327,14 +336,42 @@ class Optimizer:
         )
 
     # ------------------------------------------------------------------ minimum check
-    def _lowest_mode(self, xyz):
+    def _minimum_check(self, xyz):
+        """(lowest frequency in cm^-1, the Cartesian mode to escape along or None).
+
+        With a Hessian at the expensive level the frequencies are its own. With only
+        the cheap level's, an imaginary mode there may not be one on the expensive
+        surface: PM7's minimum of an amine is a ~180i saddle on GFN2-xTB, and escaping
+        along it twice both ways cost 6x the gradients and ended "not a minimum"
+        (Design 2026-11-24). So each such mode is confirmed first, from the expensive
+        gradients displaced along it both ways: the curvature d.(g(+) - g(-))/2h, with
+        d the mode as frequencies() gives it (M^-1/2 times the mass-weighted mode)."""
         if self.hessian_engine is not None:
-            H = self._computed_hessian(xyz)
+            H, cheap = self._computed_hessian(xyz), False
         else:
-            H = self._cheap_hessian(xyz)
+            H, cheap = self._cheap_hessian(xyz), True
         nu, modes = frequencies(self.symbols, xyz, H)
-        k = int(np.argmin(nu))
-        return float(nu[k]), modes[:, k].reshape(self.n, 3)
+        order = np.argsort(nu)
+        suspects = [k for k in order if nu[k] < -self.imaginary_threshold]
+        if not cheap or not suspects:
+            k = int(order[0])
+            return float(nu[k]), (modes[:, k].reshape(self.n, 3) if suspects else None)
+        others = [nu[k] for k in order if nu[k] >= -self.imaginary_threshold]
+        lowest = float(min(others)) if others else np.inf
+        for k in suspects:
+            d = modes[:, k].reshape(self.n, 3)
+            h = self.confirm_displacement / float(np.max(np.linalg.norm(d, axis=1)))
+            _, gp = self._evaluate(xyz + h * d)
+            _, gm = self._evaluate(xyz - h * d)
+            curvature = float(np.sum(d * (gp - gm))) / (2.0 * h)
+            nu_x = float(
+                np.sign(curvature) * np.sqrt(abs(curvature) * _EV_A2_AMU_TO_CM2)
+            )
+            self.confirmations.append({"cheap": float(nu[k]), "expensive": nu_x})
+            if nu_x < -self.imaginary_threshold:
+                return nu_x, d
+            lowest = min(lowest, nu_x)
+        return lowest, None
 
     def run(self):
         """Minimize, then (with a Hessian engine) check the end point and escape from
@@ -344,9 +381,9 @@ class Optimizer:
         checker = self.hessian_engine or self.cheap_hessian_engine
         if self.check_minimum and checker is not None and result.converged:
             for round_ in range(self.escape_rounds + 1):
-                nu, mode = self._lowest_mode(result.xyz)
+                nu, mode = self._minimum_check(result.xyz)
                 result.lowest_frequency = nu
-                result.minimum = nu > -self.imaginary_threshold
+                result.minimum = mode is None
                 if result.minimum or round_ == self.escape_rounds:
                     break
                 d = mode * (
@@ -377,6 +414,7 @@ class Optimizer:
         result.n_hessians = self.n_hessians
         result.n_cheap_hessians = self.n_cheap_hessians
         result.n_refreshes = self.n_refreshes
+        result.confirmations = self.confirmations
         return result
 
 
