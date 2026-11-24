@@ -43,6 +43,8 @@ class SurrogateResult:
     minimum: bool | None = None
     lowest_frequency: float | None = None
     confirmations: list = field(default_factory=list)
+    escapes: list = field(default_factory=list)
+    fallback: str | None = None
     history: list = field(default_factory=list)
 
     @property
@@ -86,7 +88,16 @@ class SurrogateOptimizer:
         inner_max_steps cheap gradients.
     hessian_engine, cheap_hessian_engine : callable, optional
         For checking the end point (the cheap level's modes confirmed at the
-        expensive level, as Optimizer does); no check without either.
+        expensive level, as Optimizer does); no check without either. The cheap
+        Hessian also serves the quasi-Newton fallback.
+    wander : float
+        The micro-iterations stop beyond this many trust radii.
+    fallback_after : int
+        After this many poor surrogate steps in a row (ratio < 0.25, or no step
+        found), the rest is quasi-Newton on the expensive level alone; also when the
+        cheap level fails at an expensive point.
+    escape_displacement, escape_rounds : float, int
+        As for Optimizer: the escape from a confirmed saddle point.
     """
 
     def __init__(
@@ -107,6 +118,10 @@ class SurrogateOptimizer:
         hessian_engine=None,
         cheap_hessian_engine=None,
         check_minimum=True,
+        wander=2.0,
+        fallback_after=3,
+        escape_displacement=0.3,
+        escape_rounds=2,
     ):
         if variant not in ("delta-hessian", "delta-gradient"):
             raise ValueError(f"Unknown surrogate variant {variant!r}")
@@ -125,6 +140,10 @@ class SurrogateOptimizer:
         self.hessian_engine = hessian_engine
         self.cheap_hessian_engine = cheap_hessian_engine
         self.check_minimum = check_minimum
+        self.wander = wander
+        self.fallback_after = fallback_after
+        self.escape_displacement = escape_displacement
+        self.escape_rounds = escape_rounds
         self.n_gradients = 0
         self.n_cheap_gradients = 0
 
@@ -142,86 +161,159 @@ class SurrogateOptimizer:
     def _converged(self, g):
         return float(np.max(np.linalg.norm(g, axis=1))) <= self.fmax
 
-    # ------------------------------------------------------------------ run
-    def run(self):
-        x = self.xyz0.copy()
+    # ------------------------------------------------------------------ descent
+    def _plain(self, x, why, history):
+        """The rest of the way by quasi-Newton on the expensive level alone, the
+        "no surrogate" candidate (proposal §6), with the cheap Hessian if there is
+        one."""
+        history.append({"fallback": why})
+        kw = (
+            {"hessian": "cheap", "cheap_hessian_engine": self.cheap_hessian_engine}
+            if self.cheap_hessian_engine is not None
+            else {"hessian": "lindh"}
+        )
+        r = Optimizer(
+            self._expensive,
+            self.symbols,
+            x,
+            fmax=self.fmax,
+            max_steps=self.max_steps,
+            check_minimum=False,
+            **kw,
+        ).run()
+        return r.xyz, r.energy, r.gradient, r.n_steps, r.n_rejected
+
+    def _descend(self, x):
+        """Minimize from x; (xyz, energy, gradient, steps, rejected, history,
+        fallback reason or None)."""
+        x = np.asarray(x, float).reshape(self.n, 3).copy()
+        history = []
         eH, gH = self._expensive(x)
-        eL, gL = self._cheap(x)
+        try:
+            eL, gL = self._cheap(x)
+        except Exception as e:  # noqa: BLE001 - any failure of the cheap level
+            why = f"the cheap level failed at an expensive point: {e}"
+            return (*self._plain(x, why, history), history, why)
         dB = np.zeros((3 * self.n, 3 * self.n))
         trust = self.trust0
-        history = [{"energy": eH, "max_force": _max_force(gH), "trust": trust}]
-        n_steps = n_rejected = 0
+        history.append({"energy": eH, "max_force": _max_force(gH), "trust": trust})
+        n_steps = n_rejected = poor = 0
         while not self._converged(gH) and n_steps < self.max_steps:
+            if poor >= self.fallback_after:
+                why = f"{poor} poor surrogate steps in a row"
+                x, eH, gH, k, j = self._plain(x, why, history)
+                return x, eH, gH, n_steps + k, n_rejected + j, history, why
             n_steps += 1
             dE, dg = eH - eL, (gH - gL).ravel()
             x0 = x.copy()
-
+            bound = self.wander * trust
             visited = []  # (S, point aligned onto x0) for every micro-iteration
+            attempted = []  # points the micro-iterations tried beyond the bound
 
-            def S(y, x0=x0, dE=dE, dg=dg, dB=dB, visited=visited):
+            def S(
+                y,
+                x0=x0,
+                dE=dE,
+                dg=dg,
+                dB=dB,
+                visited=visited,
+                attempted=attempted,
+                bound=bound,
+            ):
                 y = np.asarray(y, float).reshape(-1, 3)
-                el, gl = self._cheap(y)
+                ya = _aligned(y, x0)
+                if float(np.max(np.linalg.norm(ya - x0, axis=1))) > bound:
+                    attempted.append(ya)
+                    # the micro-iterations stay near the trust region: far beyond
+                    # it the cheap level's SCF failed (GFN1, 7 runs, 2026-11-24)
+                    raise _Leave()
+                try:
+                    el, gl = self._cheap(y)
+                except _Leave:
+                    raise
+                except Exception as e:  # noqa: BLE001 - the cheap level failed here
+                    raise _Leave() from e
                 d = (y - x0).ravel()
                 Bd = dB @ d
                 value = el + dE + float(dg @ d) + 0.5 * float(d @ Bd)
-                visited.append((value, _aligned(y, x0)))
+                visited.append((value, ya))
                 return value, gl + (dg + Bd).reshape(-1, 3)
 
             # converge S only as far as the expensive gradient warrants (an inexact
             # Newton step): tighter than the shared criterion only near the end
-            inner = Optimizer(
-                S,
-                self.symbols,
-                x0,
-                fmax=max(self.inner_fmax, self.inner_relative * _max_force(gH)),
-                max_steps=self.inner_max_steps,
-                check_minimum=False,
-            ).run()
+            converged_inner = False
+            try:
+                inner = Optimizer(
+                    S,
+                    self.symbols,
+                    x0,
+                    fmax=max(self.inner_fmax, self.inner_relative * _max_force(gH)),
+                    max_steps=self.inner_max_steps,
+                    check_minimum=False,
+                    # its own trust radius (internal coordinates) no larger than
+                    # ours: its first step otherwise left the region at once and
+                    # the surrogate never moved (n-decane, Design 2026-11-24)
+                    trust=trust,
+                    max_trust=self.wander * trust,
+                ).run()
+                converged_inner = inner.converged
+            except _Leave:
+                pass
+            micro = len(visited)
             # the step: the lowest point of S on the micro-iterations' path inside
             # the trust radius. Scaling an end point back onto the trust sphere could
-            # land uphill on S (an indefinite ΔB lets S run away), and such a step
-            # was accepted with the expensive energy far higher (Design 2026-11-24).
+            # land uphill on S, and such a step was accepted with the expensive
+            # energy far higher (Design 2026-11-24).
             inside = [
                 (value, y)
                 for value, y in visited
                 if float(np.max(np.linalg.norm(y - x0, axis=1))) <= trust * (1 + 1e-9)
             ]
-            value, y = min(inside, key=lambda pair: pair[0])
-            if value - eH >= -1.0e-9:
-                # the path left the trust radius at once (the micro-iterations take
-                # their own steps): backtrack along the line toward the lowest point
-                # they found, at one cheap evaluation per trial
-                best = min(visited, key=lambda pair: pair[0])[1]
+            value, y = min(inside, key=lambda pair: pair[0]) if inside else (eH, x0)
+            if value - eH >= -1.0e-9 and (len(visited) > 1 or attempted):
+                # the path left the trust radius at once: backtrack along the line
+                # toward the lowest point it found (or the first point it tried
+                # beyond the bound), one cheap evaluation per trial
+                if len(visited) > 1:
+                    best = min(visited, key=lambda pair: pair[0])[1]
+                else:
+                    best = attempted[0]
                 d = best - x0
                 longest = float(np.max(np.linalg.norm(d, axis=1)))
                 alpha = min(1.0, trust / longest) if longest > 0.0 else 0.0
                 for _ in range(6):
                     if alpha <= 0.0:
                         break
-                    trial = x0 + alpha * d
-                    v, _ = S(trial)
+                    try:
+                        v, _ = S(x0 + alpha * d)
+                    except _Leave:
+                        v = np.inf
                     if v - eH < -1.0e-9:
-                        value, y = v, trial
+                        value, y = v, x0 + alpha * d
                         break
                     alpha *= 0.5
             predicted = value - eH
             kind = (
                 "surrogate"
-                if inner.converged and len(inside) == len(visited)
-                else ("restricted")
+                if converged_inner and len(inside) == len(visited)
+                else "restricted"
             )
             if predicted >= -1.0e-9:
                 # nothing inside the trust radius improves S: shrink it, without
                 # spending an expensive gradient
+                poor += 1
                 trust = max(self.min_trust, 0.5 * trust)
-                history.append(
-                    {"no step": True, "trust": trust, "micro": inner.n_gradients}
-                )
-                if trust <= self.min_trust:
-                    break
+                history.append({"no step": True, "trust": trust, "micro": micro})
                 continue
             eH_new, gH_new = self._expensive(y)
-            eL_new, gL_new = self._cheap(y)
+            try:
+                eL_new, gL_new = self._cheap(y)
+            except Exception as e:  # noqa: BLE001 - the cheap level failed here
+                if eH_new < eH:
+                    x = y
+                why = f"the cheap level failed at an expensive point: {e}"
+                x, eH, gH, k, j = self._plain(x, why, history)
+                return x, eH, gH, n_steps + k, n_rejected + j, history, why
             actual = eH_new - eH
             ratio = actual / predicted
             step = (y - x0).ravel()
@@ -230,6 +322,7 @@ class SurrogateOptimizer:
                 dg_new = (gH_new - gL_new).ravel()
                 dB = _sr1(dB, step, dg_new - dg, rigid_modes(x0))
             length = float(np.max(np.linalg.norm(step.reshape(-1, 3), axis=1)))
+            poor = poor + 1 if ratio < 0.25 else 0
             if actual > 1.0e-6 and ratio < -1.0:  # predicted is a decrease here
                 n_rejected += 1
                 trust = max(self.min_trust, 0.5 * min(trust, length))
@@ -248,9 +341,18 @@ class SurrogateOptimizer:
                     "ratio": ratio,
                     "step": length,
                     "kind": kind,
-                    "micro": inner.n_gradients,
+                    "micro": micro,
                 }
             )
+        return x, eH, gH, n_steps, n_rejected, history, None
+
+    # ------------------------------------------------------------------ run
+    def run(self):
+        """Minimize, then check the end point (the cheap level's imaginary modes
+        confirmed at the expensive level, as Optimizer does) and escape from a
+        confirmed saddle: displace along the mode both ways, minimize each, keep the
+        lower; up to escape_rounds rounds."""
+        x, eH, gH, n_steps, n_rejected, history, why = self._descend(self.xyz0)
         result = SurrogateResult(
             xyz=x,
             energy=eH,
@@ -259,11 +361,10 @@ class SurrogateOptimizer:
             n_steps=n_steps,
             n_rejected=n_rejected,
             history=history,
+            fallback=why,
         )
         checker = self.hessian_engine or self.cheap_hessian_engine
         if self.check_minimum and checker is not None and result.converged:
-            # the same check as Optimizer's, with the cheap level's modes confirmed
-            # at the expensive level (no escape here yet)
             check = Optimizer(
                 self._expensive,
                 self.symbols,
@@ -272,12 +373,43 @@ class SurrogateOptimizer:
                 hessian_engine=self.hessian_engine,
                 cheap_hessian_engine=self.cheap_hessian_engine,
             )
-            nu, mode = check._minimum_check(x)
-            result.lowest_frequency, result.minimum = nu, mode is None
+            for round_ in range(self.escape_rounds + 1):
+                nu, mode = check._minimum_check(result.xyz)
+                result.lowest_frequency, result.minimum = nu, mode is None
+                if result.minimum or round_ == self.escape_rounds:
+                    break
+                d = mode * (
+                    self.escape_displacement / np.max(np.linalg.norm(mode, axis=1))
+                )
+                attempts = [
+                    self._descend(result.xyz + sign * d) for sign in (1.0, -1.0)
+                ]
+                best = min(attempts, key=lambda a: (not self._converged(a[2]), a[1]))
+                result.escapes.append(
+                    {
+                        "round": round_ + 1,
+                        "frequency": nu,
+                        "energies": [a[1] for a in attempts],
+                        "saddle energy": result.energy,
+                    }
+                )
+                result.xyz, result.energy, result.gradient = best[0], best[1], best[2]
+                result.converged = self._converged(best[2])
+                result.n_steps += best[3]
+                result.n_rejected += best[4]
+                result.history += best[5]
+                result.fallback = result.fallback or best[6]
+                if not result.converged:
+                    break
             result.confirmations = check.confirmations
         result.n_gradients = self.n_gradients
         result.n_cheap_gradients = self.n_cheap_gradients
         return result
+
+
+class _Leave(Exception):
+    """The micro-iterations left the region around the trust radius, or the cheap
+    level failed there."""
 
 
 #: the largest |eigenvalue| (eV/Å^2) of the learned Hessian difference: differences

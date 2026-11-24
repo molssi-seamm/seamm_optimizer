@@ -36,6 +36,9 @@ BOHR = 0.529177210903  # Å
 EV_KJ = 96.48533212
 TBLITE_PYTHON = Path.home() / "miniconda3/envs/seamm-tblite/bin/python"
 ACCURACY = None  # tblite's accuracy (default 1.0; smaller is tighter)
+#: how the end point is checked: "exact" (GFN2 Hessian), "cheap" (GFN1 Hessian, its
+#: imaginary modes confirmed from GFN2 gradients, as in production) or "none"
+CHECK = "exact"
 
 
 class Tblite:
@@ -110,6 +113,15 @@ VARIANTS = {
 }
 
 
+def checking(hessian, gfn1):
+    """The minimum-check arguments for CHECK."""
+    if CHECK == "none":
+        return {"check_minimum": False}
+    if CHECK == "cheap":
+        return {"cheap_hessian_engine": gfn1}
+    return {"hessian_engine": hessian}
+
+
 def main(paths, variants=("TRIC", "TRIC-mmff", "TRIC-gfn1", "TRIC-exact"),
          baselines=("ase", "geometric"), tag="", python=TBLITE_PYTHON):
     tb = Tblite(python)
@@ -133,7 +145,7 @@ def main(paths, variants=("TRIC", "TRIC-mmff", "TRIC-gfn1", "TRIC-exact"),
                         calls[0] = 0
                         t = time.time()
                         try:
-                            r = SurrogateOptimizer(engine, sur, symbols, xyz, hessian_engine=hessian, **kw).run()
+                            r = SurrogateOptimizer(engine, sur, symbols, xyz, **checking(hessian, gfn1), **kw).run()
                         except Exception as e:  # noqa: BLE001 - record and go on
                             row[label] = {"grads": calls[0], "converged": False, "E": None, "error": str(e)}
                             continue
@@ -152,7 +164,9 @@ def main(paths, variants=("TRIC", "TRIC-mmff", "TRIC-gfn1", "TRIC-exact"),
                     calls[0] = 0
                     t = time.time()
                     try:
-                        r = Optimizer(engine, symbols, xyz, hessian_engine=hessian, **kw).run()
+                        if CHECK == "cheap" and kw.get("hessian") != "cheap":
+                            kw.setdefault("refresh", "never")  # the GFN1 engine only checks
+                        r = Optimizer(engine, symbols, xyz, **{**checking(hessian, gfn1), **kw}).run()
                     except Exception as e:  # noqa: BLE001 - record and go on
                         row[label] = {"grads": calls[0], "converged": False, "E": None, "error": str(e)}
                         continue
@@ -212,4 +226,5 @@ if __name__ == "__main__":
     paths = [a for a in args if not a.startswith("--")]
     variants = option("variants", "TRIC,TRIC-mmff,TRIC-gfn1,TRIC-exact").split(",")
     baselines = [b for b in option("baselines", "ase,geometric").split(",") if b]
+    CHECK = option("check", "exact")
     main(paths, variants, baselines, option("tag", ""), option("tblite-python", TBLITE_PYTHON))
