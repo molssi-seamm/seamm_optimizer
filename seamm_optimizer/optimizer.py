@@ -27,11 +27,14 @@ import logging
 import numpy as np
 
 from . import coordinates as coordinate_systems
-from .geometry import frequencies
+from .geometry import _EV_A2_AMU_TO_CM2, frequencies
 from .model_hessian import HARTREE, lindh_hessian
 from .steps import bfgs_update, positive_hessian, rfo_step
 
 logger = logging.getLogger(__name__)
+
+#: how many recent steps judge a refreshed Hessian
+REFRESH_PAIRS = 5
 
 #: ASE BFGS's starting Hessian, a scaled identity, kept for comparisons
 ASE_IDENTITY = 70.0  # eV/Å^2
@@ -47,6 +50,7 @@ class Result:
     n_hessians: int = 0
     n_cheap_hessians: int = 0
     n_refreshes: int = 0
+    n_refreshes_declined: int = 0
     n_steps: int = 0
     n_rejected: int = 0
     n_fallbacks: int = 0
@@ -56,6 +60,7 @@ class Result:
     minimum: bool | None = None
     lowest_frequency: float | None = None
     escapes: list = field(default_factory=list)
+    confirmations: list = field(default_factory=list)
     history: list = field(default_factory=list)
 
     @property
@@ -104,6 +109,11 @@ class Optimizer:
     escape_displacement : float
         The largest atomic displacement (Å) along the imaginary mode.
     escape_rounds : int
+        How many times to escape from a saddle point at most.
+    confirm_displacement : float
+        The largest atomic displacement (Å) for confirming, from expensive gradients,
+        an imaginary mode that only the cheap level's Hessian shows (two gradients
+        per mode), before escaping along it.
     """
 
     def __init__(
@@ -126,6 +136,7 @@ class Optimizer:
         imaginary_threshold=30.0,
         escape_displacement=0.3,
         escape_rounds=2,
+        confirm_displacement=0.02,
     ):
         self.engine = engine
         self.symbols = list(symbols)
@@ -146,10 +157,13 @@ class Optimizer:
         self.imaginary_threshold = imaginary_threshold
         self.escape_displacement = escape_displacement
         self.escape_rounds = escape_rounds
+        self.confirm_displacement = confirm_displacement
+        self.confirmations = []
         self.n_gradients = 0
         self.n_hessians = 0
         self.n_cheap_hessians = 0
         self.n_refreshes = 0
+        self.n_refreshes_declined = 0
 
     # ------------------------------------------------------------------ engines
     def _evaluate(self, xyz):
@@ -209,6 +223,9 @@ class Optimizer:
         trust = self.trust0
         history = [{"energy": energy, "max_force": _max_force(gx), "trust": trust}]
         n_steps = n_rejected = n_fallbacks = n_rebuilds = poor = 0
+        # the recent steps and gradient changes in the current coordinates, for
+        # judging a refreshed Hessian (cleared when the coordinates are rebuilt)
+        pairs = []
         last_step = 0.0
         while not self._converged(gx) and n_steps < self.max_steps:
             n_steps += 1
@@ -242,6 +259,7 @@ class Optimizer:
                     self.coordinates, self.symbols, xyz_new
                 )
                 n_rebuilds += 1
+                pairs = []
                 hq = coords.hessian(xyz_new, gx_new, hx)
                 gq_new = coords.gradient(xyz_new, gx_new)
                 gq_old = coords.gradient(xyz, gx)
@@ -254,6 +272,7 @@ class Optimizer:
                 step = coords.difference(xyz_new, xyz)
                 # the curvature information is valid whether or not the step is kept
                 hq, _ = bfgs_update(hq, step, gq_new - gq, null=null)
+                pairs = (pairs + [(step, gq_new - gq)])[-REFRESH_PAIRS:]
             length = float(np.linalg.norm(step))
             # Only a step much worse than predicted (ratio < -1) is rejected, as in
             # geomeTRIC: rejecting every small rise cost a gradient each time and,
@@ -271,6 +290,7 @@ class Optimizer:
                     )
                     hq = coords.hessian(xyz, gx, hx)
                     gq = coords.gradient(xyz, gx)
+                    pairs = []
                 history.append(
                     {
                         "rejected": True,
@@ -291,10 +311,7 @@ class Optimizer:
                     else poor >= self.refresh_after
                 )
                 if due and not self._converged(gx):
-                    hq = positive_hessian(
-                        coords.hessian(xyz, gx, self._cheap_hessian(xyz))
-                    )
-                    self.n_refreshes += 1
+                    hq = self._refreshed(coords, xyz, gx, hq, pairs)
                     poor = 0
             # good steps grow the trust radius, poor ones halve it (from the smaller
             # of the radius and the step), okay ones leave it
@@ -327,14 +344,67 @@ class Optimizer:
         )
 
     # ------------------------------------------------------------------ minimum check
-    def _lowest_mode(self, xyz):
+    def _refreshed(self, coords, xyz, gx, hq, pairs):
+        """The Hessian after a refresh from the cheap level: the cheap Hessian with
+        the recent BFGS updates replayed on it, but only if it reproduces those
+        steps' gradient changes better than the current model; otherwise the current
+        model. A cheap level that disagrees with the expensive one (MMFF under
+        GFN2-xTB) was refreshed 4 times and threw away what BFGS had learned: 26
+        gradients against 20 with Lindh's model alone (Design 2026-11-24)."""
+        null = coords.rigid(xyz)
+        candidate = positive_hessian(coords.hessian(xyz, gx, self._cheap_hessian(xyz)))
+        for s, y in pairs:
+            candidate, _ = bfgs_update(candidate, s, y, null=null)
+        if pairs:
+            P = np.eye(len(hq)) - null @ null.T if null.shape[1] else np.eye(len(hq))
+
+            def misfit(H):
+                return sum(
+                    float(np.linalg.norm(P @ (H @ s - y)) ** 2) for s, y in pairs
+                )
+
+            if misfit(candidate) >= misfit(hq):
+                self.n_refreshes_declined += 1
+                return hq
+        self.n_refreshes += 1
+        return candidate
+
+    def _minimum_check(self, xyz):
+        """(lowest frequency in cm^-1, the Cartesian mode to escape along or None).
+
+        With a Hessian at the expensive level the frequencies are its own. With only
+        the cheap level's, an imaginary mode there may not be one on the expensive
+        surface: PM7's minimum of an amine is a ~180i saddle on GFN2-xTB, and escaping
+        along it twice both ways cost 6x the gradients and ended "not a minimum"
+        (Design 2026-11-24). So each such mode is confirmed first, from the expensive
+        gradients displaced along it both ways: the curvature d.(g(+) - g(-))/2h, with
+        d the mode as frequencies() gives it (M^-1/2 times the mass-weighted mode)."""
         if self.hessian_engine is not None:
-            H = self._computed_hessian(xyz)
+            H, cheap = self._computed_hessian(xyz), False
         else:
-            H = self._cheap_hessian(xyz)
+            H, cheap = self._cheap_hessian(xyz), True
         nu, modes = frequencies(self.symbols, xyz, H)
-        k = int(np.argmin(nu))
-        return float(nu[k]), modes[:, k].reshape(self.n, 3)
+        order = np.argsort(nu)
+        suspects = [k for k in order if nu[k] < -self.imaginary_threshold]
+        if not cheap or not suspects:
+            k = int(order[0])
+            return float(nu[k]), (modes[:, k].reshape(self.n, 3) if suspects else None)
+        others = [nu[k] for k in order if nu[k] >= -self.imaginary_threshold]
+        lowest = float(min(others)) if others else np.inf
+        for k in suspects:
+            d = modes[:, k].reshape(self.n, 3)
+            h = self.confirm_displacement / float(np.max(np.linalg.norm(d, axis=1)))
+            _, gp = self._evaluate(xyz + h * d)
+            _, gm = self._evaluate(xyz - h * d)
+            curvature = float(np.sum(d * (gp - gm))) / (2.0 * h)
+            nu_x = float(
+                np.sign(curvature) * np.sqrt(abs(curvature) * _EV_A2_AMU_TO_CM2)
+            )
+            self.confirmations.append({"cheap": float(nu[k]), "expensive": nu_x})
+            if nu_x < -self.imaginary_threshold:
+                return nu_x, d
+            lowest = min(lowest, nu_x)
+        return lowest, None
 
     def run(self):
         """Minimize, then (with a Hessian engine) check the end point and escape from
@@ -344,9 +414,9 @@ class Optimizer:
         checker = self.hessian_engine or self.cheap_hessian_engine
         if self.check_minimum and checker is not None and result.converged:
             for round_ in range(self.escape_rounds + 1):
-                nu, mode = self._lowest_mode(result.xyz)
+                nu, mode = self._minimum_check(result.xyz)
                 result.lowest_frequency = nu
-                result.minimum = nu > -self.imaginary_threshold
+                result.minimum = mode is None
                 if result.minimum or round_ == self.escape_rounds:
                     break
                 d = mode * (
@@ -377,6 +447,8 @@ class Optimizer:
         result.n_hessians = self.n_hessians
         result.n_cheap_hessians = self.n_cheap_hessians
         result.n_refreshes = self.n_refreshes
+        result.n_refreshes_declined = self.n_refreshes_declined
+        result.confirmations = self.confirmations
         return result
 
 

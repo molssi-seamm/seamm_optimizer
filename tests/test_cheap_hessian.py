@@ -67,7 +67,9 @@ def test_a_fixed_refresh_interval_refreshes():
         check_minimum=False,
     ).run()
     assert r.converged
-    assert r.n_refreshes == r.n_cheap_hessians - 1 > 0
+    # every refresh is computed; it is adopted, or declined when the BFGS-updated
+    # model fits the recent steps better
+    assert r.n_refreshes + r.n_refreshes_declined == r.n_cheap_hessians - 1 > 0
 
 
 def test_the_minimum_check_uses_the_cheap_hessian_without_an_expensive_one():
@@ -90,3 +92,75 @@ def test_the_minimum_check_uses_the_cheap_hessian_without_an_expensive_one():
     ).run()
     # TRIC leaves this saddle by itself; the check runs on the cheap Hessian
     assert r.minimum and r.n_hessians == 0 and r.n_cheap_hessians >= 1
+
+
+def _minimized(smiles):
+    m = MMFF(smiles)
+    r = Optimizer(m.engine, m.symbols, m.xyz, check_minimum=False, fmax=1.0e-4).run()
+    return m, r.xyz
+
+
+def test_an_imaginary_mode_only_the_cheap_level_shows_is_not_escaped():
+    """PM7's minimum of an amine is a ~180i saddle on GFN2-xTB: escaping along that
+    mode twice both ways cost 6x the gradients and ended "not a minimum". A mode
+    the cheap Hessian calls imaginary is now confirmed from two expensive gradients
+    first. Here the cheap Hessian is the exact one with its softest mode flipped."""
+    m, xyz = _minimized("CCN")
+
+    def flipped(x):
+        H = m.hessian(x)
+        w, v = np.linalg.eigh(H)
+        k = int(np.argmax(w > 1.0e-2))  # the softest mode that is not rigid motion
+        return H - 2.0 * w[k] * np.outer(v[:, k], v[:, k])
+
+    opt = Optimizer(
+        m.engine, m.symbols, xyz, hessian="cheap", cheap_hessian_engine=flipped
+    )
+    r = opt.run()
+    assert r.minimum and not r.escapes
+    assert r.confirmations and all(
+        c["cheap"] < -30.0 < c["expensive"] for c in r.confirmations
+    )
+    assert r.n_gradients <= 1 + 2 * len(r.confirmations) + 3
+
+
+def test_an_imaginary_mode_the_expensive_level_confirms_is_escaped_from():
+    """With the true saddle (propene's methyl torsion at the top of its barrier) and
+    only a cheap Hessian, the confirmation agrees and the check reports the mode."""
+    from rdkit.Chem import AllChem, rdMolTransforms
+
+    m = MMFF("CC=C")
+    h = next(
+        a.GetIdx()
+        for a in m.mol.GetAtomWithIdx(0).GetNeighbors()
+        if a.GetSymbol() == "H"
+    )
+    conf = m.mol.GetConformer()
+    rdMolTransforms.SetDihedralDeg(conf, h, 0, 1, 2, 60.0)
+    ff = AllChem.MMFFGetMoleculeForceField(m.mol, m.props)
+    ff.MMFFAddTorsionConstraint(h, 0, 1, 2, False, 60.0, 60.0, 1.0e4)
+    ff.Minimize(maxIts=10000)
+    xyz = np.array(conf.GetPositions())
+    opt = Optimizer(m.engine, m.symbols, xyz, cheap_hessian_engine=m.hessian)
+    nu, mode = opt._minimum_check(xyz)
+    assert nu < -30.0 and mode is not None
+    assert opt.confirmations[0]["expensive"] < -30.0
+
+
+def test_a_refresh_that_fits_the_recent_steps_worse_is_declined():
+    """A cheap level that disagrees with the expensive one should not overwrite what
+    the BFGS updates learned: a refresh is adopted only if it reproduces the recent
+    gradient changes better (MMFF under GFN2-xTB: 26 -> 15 gradients for one
+    fragment). Here the "cheap" Hessian is badly wrong (a stiff scaled identity)."""
+    m = MMFF("CCCCCCO")
+    x = _perturbed(m, 0.2)
+    n = 3 * len(m.symbols)
+
+    def wrong(xyz):
+        return 50.0 * np.eye(n)
+
+    kw = dict(hessian="lindh", cheap_hessian_engine=wrong, check_minimum=False)
+    guarded = Optimizer(m.engine, m.symbols, x, refresh=2, **kw).run()
+    never = Optimizer(m.engine, m.symbols, x, refresh="never", **kw).run()
+    assert guarded.converged and guarded.n_refreshes_declined > 0
+    assert guarded.n_gradients <= never.n_gradients + 2
