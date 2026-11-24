@@ -1,6 +1,11 @@
 =======
 History
 =======
+2026.11.24 -- First release: phases 1-3
+    * Phase 3: cheap-level Hessians (at the start, refreshed when the model keeps
+      failing, and for the minimum check), with their eigenvalues clamped for
+      minimization.
+
 (unreleased) -- Phase 2: internal coordinates
     * Steps, Hessian and BFGS updates in geomeTRIC's internal coordinates (TRIC by
       default; DLC, HDLC, primitives, or Cartesians), with every back-transformation
