@@ -565,11 +565,13 @@
                 <span class="c1"># the curvature information is valid whether or not the step is kept</span>
                 <span class="n">hq</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">bfgs_update</span><span class="p">(</span><span class="n">hq</span><span class="p">,</span> <span class="n">step</span><span class="p">,</span> <span class="n">gq_new</span> <span class="o">-</span> <span class="n">gq</span><span class="p">,</span> <span class="n">null</span><span class="o">=</span><span class="n">null</span><span class="p">)</span>
             <span class="n">length</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">step</span><span class="p">))</span>
-            <span class="c1"># a rise beyond numerical noise is rejected; tiny rises near convergence</span>
-            <span class="c1"># are accepted (the gradient is what is converged)</span>
-            <span class="k">if</span> <span class="n">energy_new</span> <span class="o">-</span> <span class="n">energy</span> <span class="o">&gt;</span> <span class="mf">1.0e-6</span> <span class="ow">and</span> <span class="n">ratio</span> <span class="o">&lt;</span> <span class="mf">0.0</span><span class="p">:</span>
+            <span class="c1"># Only a step much worse than predicted (ratio &lt; -1) is rejected, as in</span>
+            <span class="c1"># geomeTRIC: rejecting every small rise cost a gradient each time and,</span>
+            <span class="c1"># with the trust cut to the step, made the optimizer crawl (Design</span>
+            <span class="c1"># 2026-11-24, MMFF proxy: an exact Hessian took 20 gradients against 15)</span>
+            <span class="k">if</span> <span class="n">energy_new</span> <span class="o">-</span> <span class="n">energy</span> <span class="o">&gt;</span> <span class="mf">1.0e-6</span> <span class="ow">and</span> <span class="n">ratio</span> <span class="o">&lt;</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">:</span>
                 <span class="n">n_rejected</span> <span class="o">+=</span> <span class="mi">1</span>
-                <span class="n">trust</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">min_trust</span><span class="p">,</span> <span class="mf">0.25</span> <span class="o">*</span> <span class="n">length</span><span class="p">)</span>
+                <span class="n">trust</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">min_trust</span><span class="p">,</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="nb">min</span><span class="p">(</span><span class="n">trust</span><span class="p">,</span> <span class="n">length</span><span class="p">))</span>
                 <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s2">"Cartesian fallback"</span><span class="p">:</span>
                     <span class="c1"># the coordinates were rebuilt at the rejected structure: rebuild</span>
                     <span class="c1"># them where we stay</span>
@@ -604,10 +606,12 @@
                     <span class="p">)</span>
                     <span class="bp">self</span><span class="o">.</span><span class="n">n_refreshes</span> <span class="o">+=</span> <span class="mi">1</span>
                     <span class="n">poor</span> <span class="o">=</span> <span class="mi">0</span>
-            <span class="k">if</span> <span class="n">ratio</span> <span class="o">&gt;</span> <span class="mf">0.75</span> <span class="ow">and</span> <span class="n">length</span> <span class="o">&gt;</span> <span class="mf">0.8</span> <span class="o">*</span> <span class="n">trust</span><span class="p">:</span>
-                <span class="n">trust</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">max_trust</span><span class="p">,</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">trust</span><span class="p">)</span>
+            <span class="c1"># good steps grow the trust radius, poor ones halve it (from the smaller</span>
+            <span class="c1"># of the radius and the step), okay ones leave it</span>
+            <span class="k">if</span> <span class="n">ratio</span> <span class="o">&gt;</span> <span class="mf">0.75</span><span class="p">:</span>
+                <span class="n">trust</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">max_trust</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">trust</span><span class="p">)</span>
             <span class="k">elif</span> <span class="n">ratio</span> <span class="o">&lt;</span> <span class="mf">0.25</span><span class="p">:</span>
-                <span class="n">trust</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">min_trust</span><span class="p">,</span> <span class="mf">0.25</span> <span class="o">*</span> <span class="n">length</span><span class="p">)</span>
+                <span class="n">trust</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">min_trust</span><span class="p">,</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="nb">min</span><span class="p">(</span><span class="n">trust</span><span class="p">,</span> <span class="n">length</span><span class="p">))</span>
             <span class="n">history</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                 <span class="p">{</span>
                     <span class="s2">"energy"</span><span class="p">:</span> <span class="n">energy</span><span class="p">,</span>

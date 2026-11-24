@@ -536,6 +536,16 @@ torsion, each weighted by distance-dependent factors</p>
 Parameters by periodic-table row (1: H-He, 2: Li-Ne, 3: Na and beyond), in atomic
 units. The Hessian is returned in Cartesians, eV/Å^2.</p>
 <dl class="py data">
+<dt class="sig sig-object py" id="seamm_optimizer.model_hessian.LINEAR_COS">
+<span class="sig-prename descclassname"><span class="pre">seamm_optimizer.model_hessian.</span></span><span class="sig-name descname"><span class="pre">LINEAR_COS</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0.95</span></span><a class="headerlink" href="#seamm_optimizer.model_hessian.LINEAR_COS" title="Link to this definition">#</a></dt>
+<dd><p>torsions with a bend this close to linear (<a href="#id5"><span class="problematic" id="id6">|cos|</span></a> above it, about 162 degrees) are
+left out, as geomeTRIC leaves out such dihedrals: their B vectors grow as
+1/sin(angle), squared in the Hessian. The rho-weighted torsions include non-bonded
+pairs, e.g. across a benzene ring (isopropyl C - ipso C … para C - H), which made
+cumene’s model Hessian ~300x too stiff there (Design 2026-11-24).</p>
+</dd></dl>
+
+<dl class="py data">
 <dt class="sig sig-object py" id="seamm_optimizer.model_hessian.RHO_CUTOFF">
 <span class="sig-prename descclassname"><span class="pre">seamm_optimizer.model_hessian.</span></span><span class="sig-name descname"><span class="pre">RHO_CUTOFF</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0.0001</span></span><a class="headerlink" href="#seamm_optimizer.model_hessian.RHO_CUTOFF" title="Link to this definition">#</a></dt>
 <dd><p>products of rho smaller than this are left out</p>
@@ -737,7 +747,7 @@ keep the lower; up to escape_rounds rounds.</p>
 <p>rfo_step: the rational-function (RFO) step (Banerjee, Adams, Simons, Shepard, J.
 Phys. Chem. 89, 52 (1985)), and when it is longer than the trust radius, the
 restricted step of that length (the trust-region subproblem, solved for the level
-shift by Newton iterations on 1/<a href="#id5"><span class="problematic" id="id6">|s|</span></a>). Both are taken in the space orthogonal to
+shift by Newton iterations on 1/<a href="#id7"><span class="problematic" id="id8">|s|</span></a>). Both are taken in the space orthogonal to
 <cite>null</cite> (overall translation and rotation for Cartesians).</p>
 <p>bfgs_update: the BFGS update, skipped when the curvature condition fails, so the
 Hessian stays positive definite for minimization.</p>
@@ -758,7 +768,7 @@ False returned as the second value) when s.y is not clearly positive.</p>
 <dt class="sig sig-object py" id="seamm_optimizer.steps.positive_hessian">
 <span class="sig-prename descclassname"><span class="pre">seamm_optimizer.steps.</span></span><span class="sig-name descname"><span class="pre">positive_hessian</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">floor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.005</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">zero</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-06</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/steps.html#positive_hessian"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.steps.positive_hessian" title="Link to this definition">#</a></dt>
 <dd><p>A computed Hessian made fit for minimization: eigenvalues below <cite>floor</cite> are
-raised to it, except the near-zero ones (<a href="#id7"><span class="problematic" id="id8">|w|</span></a> &lt; zero, the rigid-body directions,
+raised to it, except the near-zero ones (<a href="#id9"><span class="problematic" id="id10">|w|</span></a> &lt; zero, the rigid-body directions,
 which the steps project out). A Hessian computed away from its own minimum has
 negative eigenvalues; clamped, a UFF Hessian on the MMFF proxy took 352 gradients
 over 25 CHNO PM7 starts against 504 raw (abs values: 418; Design 2026-11-24).</p>
@@ -851,6 +861,7 @@ BFGS updates, and a minimum check with an escape from saddle points.</p>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#module-seamm_optimizer.model_hessian">seamm_optimizer.model_hessian module</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.model_hessian.LINEAR_COS"><code class="docutils literal notranslate"><span class="pre">LINEAR_COS</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.model_hessian.RHO_CUTOFF"><code class="docutils literal notranslate"><span class="pre">RHO_CUTOFF</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.model_hessian.lindh_hessian"><code class="docutils literal notranslate"><span class="pre">lindh_hessian()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.model_hessian.rho_matrix"><code class="docutils literal notranslate"><span class="pre">rho_matrix()</span></code></a></li>
