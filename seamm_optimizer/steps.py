@@ -88,7 +88,13 @@ def bfgs_update(H, s, y, null=None):
     if sy <= 1.0e-8 * np.linalg.norm(s) * np.linalg.norm(y) or sy <= 0.0:
         return H, False
     Hs = H @ s
-    H = H + np.outer(y, y) / sy - np.outer(Hs, Hs) / float(s @ Hs)
+    sHs = float(s @ Hs)
+    H = H + np.outer(y, y) / sy
+    if sHs > 1.0e-12 * float(s @ s):
+        H = H - np.outer(Hs, Hs) / sHs
+    # else the model has no curvature along the step (e.g. a model Hessian for
+    # unbonded atoms), so H s ~ 0: the y term alone satisfies the secant condition,
+    # where the full update divided by zero (Design 2026-11-25)
     return 0.5 * (H + H.T), True
 
 
