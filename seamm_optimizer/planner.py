@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-"""Choosing how to optimize by the cost to the user (Paul 11-24: the figure of merit
-is the total time to solution, all levels included).
+"""Choosing how to optimize by the cost to the user: the figure of merit is the total
+time to solution, all levels included.
 
 Three strategies, all ending at the expensive level's minimum:
 

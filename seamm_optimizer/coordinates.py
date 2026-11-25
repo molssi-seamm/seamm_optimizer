@@ -2,7 +2,7 @@
 
 """Coordinate systems for the optimizer: Cartesians, and internal coordinates built
 with geomeTRIC's code (TRIC, delocalized internals, redundant primitives), per the
-design (proposal §4, Paul's §10 decision 1).
+design (proposal §4 and §10).
 
 Every system works in atomic units internally (bohr, hartree) and offers:
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Optimizers on a stratified sample of Paul's GDB hydrocarbons, PM7 as the expensive level.
+"""Optimizers on a stratified sample of GDB hydrocarbons, PM7 as the expensive level.
 
 The sample (fixed seed) is drawn from GDB_HC_PM7_new.csv by the 'Best' column, the
 way the best PM7 structure was found (Emin, or simulated annealing to 300-8000 K):
@@ -9,7 +9,8 @@ same start on PM7 (MOPAC, PRECISE), with GFN2-xTB (tblite, in a worker) as the c
 level; the end ΔHf is compared with the file's Ebest. Results stream to a JSON-lines
 file, one molecule per line, so a run can be resumed or read while it goes.
 
-    python benchmark/gdb_proxy.py --shard=0/4 [--per-stratum=...] [--out=gdb_results]
+    python benchmark/gdb_proxy.py --csv=GDB_HC_PM7.csv --shard=0/4 [--per-stratum=...]
+        [--out=gdb_results]
         [--tblite-python=...] [--mopac=...]
 """
 
@@ -35,18 +36,20 @@ import xtb_proxy as xp  # noqa: E402
 from seamm_optimizer import Optimizer, SurrogateOptimizer  # noqa: E402
 
 RDLogger.DisableLog("rdApp.*")
-CSV = Path.home() / "Dropbox/Science/Thermochemistry/GDB_HC_PM7_new.csv"
+#: the hydrocarbons (ID, IsomericSMILES, Best, Ebest columns); --csv=... or $GDB_CSV
+CSV = Path(os.environ.get("GDB_CSV", "GDB_HC_PM7.csv"))
 KCAL = 0.0433641043  # eV
 PER_STRATUM = {"Emin": 40, "SA_300.0": 30, "SA_500.0": 30, "SA_1000.0": 30, "SA_2000.0": 40,
                "SA_4000.0": 50, "SA_8000.0": 50, "": 30}
-MOPAC = Path.home() / "miniforge3/envs/seamm-mopac/bin/mopac"
+#: the MOPAC executable; --mopac=... or $MOPAC
+MOPAC = Path(os.environ.get("MOPAC", "mopac"))
 
 
-def sample(per_stratum, seed=20261124):
+def sample(per_stratum, seed=20261124, csv_path=None):
     """The stratified sample: reservoir-sample each 'Best' stratum while streaming."""
     rng = random.Random(seed)
     pools, seen = {k: [] for k in per_stratum}, {k: 0 for k in per_stratum}
-    with open(CSV) as fd:
+    with open(csv_path or CSV) as fd:
         for row in csv.DictReader(fd):
             k = row["Best"]
             if k not in per_stratum:
@@ -163,7 +166,7 @@ def main(args):
     only = option("variants", "")
     run_one.only = set(only.split(",")) if only else None
     mopac = Path(option("mopac", str(MOPAC)))
-    rows = sample(per, seed)[i::n]
+    rows = sample(per, seed, Path(option("csv", str(CSV))))[i::n]
     done = set()
     if out.exists():
         done = {json.loads(line)["ID"] for line in out.read_text().splitlines() if line.strip()}

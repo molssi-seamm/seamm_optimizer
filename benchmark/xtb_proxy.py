@@ -34,7 +34,8 @@ from seamm_optimizer import Optimizer, SurrogateOptimizer  # noqa: E402
 HARTREE = 27.211386245988  # eV
 BOHR = 0.529177210903  # Å
 EV_KJ = 96.48533212
-TBLITE_PYTHON = Path.home() / "miniconda3/envs/seamm-tblite/bin/python"
+#: a Python with tblite (a conda env, e.g. seamm-tblite); override with $TBLITE_PYTHON
+TBLITE_PYTHON = Path(os.environ.get("TBLITE_PYTHON", "python"))
 ACCURACY = None  # tblite's accuracy (default 1.0; smaller is tighter)
 #: how the end point is checked: "exact" (GFN2 Hessian), "cheap" (GFN1 Hessian, its
 #: imaginary modes confirmed from GFN2 gradients, as in production) or "none"

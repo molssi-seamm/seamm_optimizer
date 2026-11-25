@@ -16,7 +16,7 @@ difference of Hessians need not be positive definite). ΔB = 0 is MOPAC's
 quasi-Newton on H.
 
 Every evaluation on both levels is counted, so that the cost -- the user's time to
-solution -- can be judged at any ratio of the levels' costs (Paul 11-24).
+solution -- can be judged at any ratio of the levels' costs.
 """
 
 from dataclasses import dataclass, field
@@ -157,8 +157,8 @@ class SurrogateOptimizer:
         self.inner_relative = inner_relative
         self.inner_max_steps = inner_max_steps
         # the cost of a call at each level (any units), for capping the cheap work
-        # per step at cheap_budget expensive gradients' worth (Paul 11-24: the figure
-        # of merit is the total time to solution)
+        # per step at cheap_budget expensive gradients' worth (the figure of merit is
+        # the total time to solution)
         self.costs = dict(costs) if costs else None
         self.cheap_budget = cheap_budget
         self.hessian_engine = hessian_engine
