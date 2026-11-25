@@ -22,6 +22,9 @@ atom count N and the ratio r = c_cheap / c_expensive:
 On
 that data the surrogate was cheapest up to r ~ 0.05, Lindh from r ~ 0.1-0.2, and a
 cheap Hessian by finite differences (6N cheap gradients) paid only when nearly free.
+Scored leaving each set out in turn, choosing between Lindh and the surrogate by
+these models came within 0-13 % of the best choice per molecule, and adding the
+number of rotatable bonds did not help reliably (Design 2026-11-24).
 """
 
 from dataclasses import dataclass
@@ -62,7 +65,15 @@ def expected_costs(n_atoms, costs, cheap=True, cheap_hessian=True, cheap_budget=
         # more outer ones: fragments at r = 0.3, 999 against 808 uncapped), so the
         # uncapped cheap work is expected; at high r Lindh is chosen instead
         out["surrogate"] = lin("surrogate") + lin("surrogate cheap") * r
-    if cheap_hessian:
+    # a cheap Hessian by finite differences (6N cheap gradients) almost never paid
+    # when a cheap gradient was there for a surrogate, and choosing it on small
+    # predicted differences cost more than it saved (held-out: r = 0.001, 1301
+    # against 1090 for the surrogate alone). So with a cheap gradient the choice is
+    # Lindh or the surrogate; the cheap-Hessian path is a candidate only without one,
+    # or when the cheap Hessian's own cost is given (an analytic Hessian).
+    if cheap_hessian and (
+        not (cheap and costs.get("cheap")) or "cheap_hessian" in costs
+    ):
         h_cost = costs.get("cheap_hessian")
         if h_cost is None and costs.get("cheap"):
             h_cost = (
