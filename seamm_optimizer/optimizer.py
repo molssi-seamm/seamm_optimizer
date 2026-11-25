@@ -212,13 +212,14 @@ class Optimizer:
         energy, gx = self._evaluate(xyz)
         coords = coordinate_systems.make(self.coordinates, self.symbols, xyz)
         gq = coords.gradient(xyz, gx)
-        if self.hessian == "geometric":
+        named = self.hessian if isinstance(self.hessian, str) else None
+        if named == "geometric":
             if not hasattr(coords, "guess_hessian"):
                 raise ValueError("hessian='geometric' needs internal coordinates")
             hq = coords.guess_hessian(xyz)
         else:
             hq = coords.hessian(xyz, gx, self._starting_hessian(xyz))
-            if self.hessian in ("cheap", "computed"):
+            if named in ("cheap", "computed"):
                 hq = positive_hessian(hq)
         trust = self.trust0
         history = [{"energy": energy, "max_force": _max_force(gx), "trust": trust}]

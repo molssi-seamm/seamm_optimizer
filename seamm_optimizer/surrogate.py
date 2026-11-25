@@ -25,7 +25,9 @@ import logging
 import numpy as np
 
 from .geometry import rigid_modes
+from .model_hessian import BOHR, HARTREE
 from .optimizer import Optimizer
+from .steps import HESSIAN_FLOOR, bfgs_update, positive_hessian
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ class SurrogateResult:
     converged: bool
     n_gradients: int = 0  # expensive
     n_cheap_gradients: int = 0
+    n_cheap_hessians: int = 0
     n_steps: int = 0
     n_rejected: int = 0
     minimum: bool | None = None
@@ -102,6 +105,11 @@ class SurrogateOptimizer:
         After this many poor surrogate steps in a row (ratio < 0.25, or no step
         found), the rest is quasi-Newton on the expensive level alone; also when the
         cheap level fails at an expensive point.
+    switch, switch_after, switch_margin : bool, int, float
+        With a cheap Hessian engine, track a quasi-Newton model (the cheap Hessian,
+        BFGS-updated) beside the surrogate; when it predicts the next expensive
+        gradient better (error < switch_margin x the surrogate's) switch_after times
+        in a row, continue as the cheap-Hessian optimizer.
     escape_displacement, escape_rounds : float, int
         As for Optimizer: the escape from a confirmed saddle point.
     """
@@ -130,6 +138,9 @@ class SurrogateOptimizer:
         fallback_after=3,
         escape_displacement=0.3,
         escape_rounds=2,
+        switch=True,
+        switch_after=2,
+        switch_margin=0.8,
     ):
         if variant not in ("delta-hessian", "delta-gradient"):
             raise ValueError(f"Unknown surrogate variant {variant!r}")
@@ -157,6 +168,10 @@ class SurrogateOptimizer:
         self.fallback_after = fallback_after
         self.escape_displacement = escape_displacement
         self.escape_rounds = escape_rounds
+        self.switch = switch
+        self.switch_after = switch_after
+        self.switch_margin = switch_margin
+        self.n_cheap_hessians = 0
         self.n_gradients = 0
         self.n_cheap_gradients = 0
 
@@ -184,6 +199,31 @@ class SurrogateOptimizer:
         return int(max(2, min(self.inner_max_steps, self.cheap_budget / ratio)))
 
     # ------------------------------------------------------------------ descent
+    def _switch(self, x, why, history, H):
+        """The rest of the way as the cheap-Hessian quasi-Newton optimizer, starting
+        from the tracked Hessian (the cheap one, BFGS-updated with every step so
+        far), with refreshes from the cheap level."""
+        history.append({"switched": why})
+        r = Optimizer(
+            self._expensive,
+            self.symbols,
+            x,
+            fmax=self.fmax,
+            max_steps=self.max_steps,
+            check_minimum=False,
+            hessian=H,
+            cheap_hessian_engine=self.cheap_hessian_engine,
+        ).run()
+        self.n_cheap_hessians += r.n_cheap_hessians
+        return r.xyz, r.energy, r.gradient, r.n_steps, r.n_rejected
+
+    def _tracked_hessian(self, x):
+        """The cheap Hessian (eV/Å^2) made positive, for the quasi-Newton model
+        that is tracked alongside the surrogate."""
+        self.n_cheap_hessians += 1
+        H = np.asarray(self.cheap_hessian_engine(x), float)
+        return positive_hessian(H, floor=HESSIAN_FLOOR * HARTREE / BOHR**2)
+
     def _plain(self, x, why, history):
         """The rest of the way by quasi-Newton on the expensive level alone, the
         "no surrogate" candidate (proposal §6), with the cheap Hessian if there is
@@ -217,10 +257,32 @@ class SurrogateOptimizer:
             why = f"the cheap level failed at an expensive point: {e}"
             return (*self._plain(x, why, history), history, why)
         dB = np.zeros((3 * self.n, 3 * self.n))
+        # the online choice of how to use the cheap level: a quasi-Newton model
+        # (the cheap Hessian, BFGS-updated with each step) is tracked alongside the
+        # surrogate, and at every expensive point both predict its gradient. When
+        # the quasi-Newton model predicts better, switch_after times in a row, the
+        # rest is the cheap-Hessian optimizer. Which use wins depends on the pair:
+        # the surrogate for GFN1 under GFN2-xTB, the cheap Hessian for GFN2-xTB
+        # under PM7 (296 GDB hydrocarbons: 3887 against 4580 gradients).
+        H_qn = None
+        if (
+            self.switch
+            and self.cheap_hessian_engine is not None
+            and not self._converged(gH)
+        ):
+            H_qn = self._tracked_hessian(x)
+        qn_better = 0
         trust = self.trust0
         history.append({"energy": eH, "max_force": _max_force(gH), "trust": trust})
         n_steps = n_rejected = poor = 0
         while not self._converged(gH) and n_steps < self.max_steps:
+            if H_qn is not None and qn_better >= self.switch_after:
+                why = (
+                    f"the cheap Hessian's quasi-Newton model predicted the expensive "
+                    f"gradient better {qn_better} times in a row"
+                )
+                x, eH, gH, k, j = self._switch(x, why, history, H_qn)
+                return x, eH, gH, n_steps + k, n_rejected + j, history, why
             if poor >= self.fallback_after:
                 why = f"{poor} poor surrogate steps in a row"
                 x, eH, gH, k, j = self._plain(x, why, history)
@@ -339,6 +401,19 @@ class SurrogateOptimizer:
             actual = eH_new - eH
             ratio = actual / predicted
             step = (y - x0).ravel()
+            if H_qn is not None:
+                # both models predict the expensive gradient at y from x0
+                e_s = float(
+                    np.linalg.norm(gL_new.ravel() + dg + dB @ step - gH_new.ravel())
+                )
+                e_q = float(np.linalg.norm(gH.ravel() + H_qn @ step - gH_new.ravel()))
+                qn_better = qn_better + 1 if e_q < self.switch_margin * e_s else 0
+                errors = {"surrogate error": e_s, "quasi-Newton error": e_q}
+                H_qn, _ = bfgs_update(
+                    H_qn, step, (gH_new - gH).ravel(), null=rigid_modes(x0)
+                )
+            else:
+                errors = {}
             # learn the Hessian of the difference from this pair, kept or not
             if self.variant == "delta-hessian":
                 dg_new = (gH_new - gL_new).ravel()
@@ -364,6 +439,7 @@ class SurrogateOptimizer:
                     "step": length,
                     "kind": kind,
                     "micro": micro,
+                    **errors,
                 }
             )
         return x, eH, gH, n_steps, n_rejected, history, None
@@ -424,8 +500,10 @@ class SurrogateOptimizer:
                 if not result.converged:
                     break
             result.confirmations = check.confirmations
+            self.n_cheap_hessians += check.n_cheap_hessians
         result.n_gradients = self.n_gradients
         result.n_cheap_gradients = self.n_cheap_gradients
+        result.n_cheap_hessians = self.n_cheap_hessians
         return result
 
 
@@ -448,6 +526,8 @@ def _sr1(B, s, y, rigid=None, cap=DB_CAP):
         P = np.eye(len(s)) - rigid @ rigid.T
         s, y = P @ s, P @ y
     r = y - B @ s
+    if not np.all(np.isfinite(r)):
+        return B
     denominator = float(r @ s)
     if not np.isfinite(denominator) or abs(denominator) < 1.0e-6 * float(
         np.linalg.norm(r) * np.linalg.norm(s)
@@ -455,7 +535,8 @@ def _sr1(B, s, y, rigid=None, cap=DB_CAP):
         return B
     if float(r @ r) > 1.0e6 * abs(denominator):  # an update far beyond the cap
         return B
-    B = B + np.outer(r, r) / denominator
+    with np.errstate(over="ignore", invalid="ignore"):
+        B = B + np.outer(r, r) / denominator
     w, v = np.linalg.eigh(0.5 * (B + B.T))
     if not np.all(np.isfinite(w)):
         return np.zeros_like(B)

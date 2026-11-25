@@ -68,3 +68,39 @@ def test_an_unknown_variant_is_refused():
     m = MMFF("C")
     with pytest.raises(ValueError):
         SurrogateOptimizer(m.engine, m.engine, m.symbols, m.xyz, variant="magic")
+
+
+def test_a_perfect_surrogate_is_not_switched_away_from():
+    m = MMFF("CC(=O)NC")
+    r = SurrogateOptimizer(
+        m.engine,
+        m.engine,
+        m.symbols,
+        _start(m),
+        cheap_hessian_engine=m.hessian,
+        check_minimum=False,
+    ).run()
+    assert r.converged and not any("switched" in h for h in r.history)
+
+
+def test_a_poor_surrogate_with_a_good_cheap_hessian_switches():
+    """The surrogate's surface is 80% off, but the cheap Hessian is exact: the
+    quasi-Newton model predicts the expensive gradients better, and the run switches
+    to the cheap-Hessian optimizer (GFN2-xTB under PM7 behaves so). At 40% off the
+    surrogate still predicts better far from the minimum, and is kept."""
+    m = MMFF("CCC(=O)OC")
+
+    def soft(xyz):
+        e, g = m.engine(xyz)
+        return 0.2 * e, 0.2 * np.asarray(g)
+
+    r = SurrogateOptimizer(
+        m.engine,
+        soft,
+        m.symbols,
+        _start(m),
+        cheap_hessian_engine=m.hessian,
+        check_minimum=False,
+    ).run()
+    assert r.converged and any("switched" in h for h in r.history)
+    assert r.n_cheap_hessians >= 1

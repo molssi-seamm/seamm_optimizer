@@ -122,7 +122,10 @@ def run_one(row, tb, workdir, mopac):
         "TRIC": lambda: Optimizer(engine, symbols, xyz, hessian="lindh", cheap_hessian_engine=gfn2_hess,
                                   refresh="never").run(),
     }
+    only = getattr(run_one, "only", None)
     for name, make in variants.items():
+        if only and name not in only:
+            continue
         calls[0] = 0
         t = time.time()
         try:
@@ -133,6 +136,8 @@ def run_one(row, tb, workdir, mopac):
                          "max force": r.max_force, "escapes": len(r.escapes), "s": round(time.time() - t, 1)}
         except Exception as e:  # noqa: BLE001 - record and go on
             rec[name] = {"error": f"{type(e).__name__}: {e}"[:300], "grads": calls[0]}
+    if getattr(run_one, "only", None) and "geometric" not in run_one.only:
+        return rec
     calls[0] = 0
     t = time.time()
     try:
@@ -154,8 +159,11 @@ def main(args):
     out = Path(option("out", "gdb_results")) / f"shard{i}of{n}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
     per = json.loads(option("per-stratum", json.dumps(PER_STRATUM)))
+    seed = int(option("seed", "20261124"))
+    only = option("variants", "")
+    run_one.only = set(only.split(",")) if only else None
     mopac = Path(option("mopac", str(MOPAC)))
-    rows = sample(per)[i::n]
+    rows = sample(per, seed)[i::n]
     done = set()
     if out.exists():
         done = {json.loads(line)["ID"] for line in out.read_text().splitlines() if line.strip()}
