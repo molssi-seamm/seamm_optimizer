@@ -219,7 +219,11 @@ class Optimizer:
             hq = coords.guess_hessian(xyz)
         else:
             hq = coords.hessian(xyz, gx, self._starting_hessian(xyz))
-            if named in ("cheap", "computed"):
+            # a computed Hessian -- the cheap level's, the expensive one's, or one
+            # given as an array -- may be indefinite away from a minimum: clamp it
+            # (an unclamped array Hessian crept with a tiny trust radius, Design
+            # 2026-11-25); the model Hessians are positive already
+            if named in ("cheap", "computed") or named is None:
                 hq = positive_hessian(hq)
         trust = self.trust0
         history = [{"energy": energy, "max_force": _max_force(gx), "trust": trust}]

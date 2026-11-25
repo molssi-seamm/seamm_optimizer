@@ -12,6 +12,11 @@ History
     * Bugfix: with unbonded atoms (e.g. argon) the model Hessian can have no curvature
       along a step and the BFGS update divided by zero; the update now keeps only the
       term that satisfies the secant condition.
+    * Bugfix: a starting Hessian given as an array is clamped to positive like a
+      computed one. Unclamped, an indefinite Hessian away from the minimum left the
+      optimizer creeping with a tiny trust radius (27 of 80 distorted MMFF starts
+      did not converge). Only the surrogate's switch passes an array; the Structure
+      step and CBH paths are unchanged.
 
 2026.11.24.2 -- Bugfix: a minimum check at the cheap level escaped from minima
     * When only the cheap level's Hessian checks the end point, an imaginary mode it

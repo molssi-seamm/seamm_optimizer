@@ -231,12 +231,15 @@ def test_lindh_gives_both_bends_of_a_linear_angle():
     assert np.abs(H @ Q).max() < 1e-6
 
 
-def test_a_starting_hessian_can_be_given_as_an_array():
+@pytest.mark.parametrize("seed", [1, 3, 13, 15])
+def test_a_starting_hessian_can_be_given_as_an_array(seed):
     """Optimizer's hessian may be an array (Cartesian, eV/Å^2), as the surrogate's
     switch to the cheap-Hessian optimizer passes it; a string comparison on it once
-    failed."""
+    failed. It is clamped like a computed Hessian: unclamped, an indefinite one
+    away from the minimum left 27 of 80 distorted starts unconverged (seeds 3, 13
+    and 15 among them; seed 1 failed only on Linux)."""
     m = MMFF("CCO")
-    x = m.xyz + 0.05 * np.random.default_rng(1).normal(size=m.xyz.shape)
+    x = m.xyz + 0.05 * np.random.default_rng(seed).normal(size=m.xyz.shape)
     r = Optimizer(
         m.engine, m.symbols, x, hessian=m.hessian(x), check_minimum=False
     ).run()
