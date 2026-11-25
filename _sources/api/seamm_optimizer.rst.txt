@@ -36,10 +36,26 @@ seamm\_optimizer.optimizer module
    :show-inheritance:
    :undoc-members:
 
+seamm\_optimizer.planner module
+-------------------------------
+
+.. automodule:: seamm_optimizer.planner
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 seamm\_optimizer.steps module
 -----------------------------
 
 .. automodule:: seamm_optimizer.steps
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+seamm\_optimizer.surrogate module
+---------------------------------
+
+.. automodule:: seamm_optimizer.surrogate
    :members:
    :show-inheritance:
    :undoc-members:

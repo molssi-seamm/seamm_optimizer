@@ -415,7 +415,7 @@
 <span class="sd">    check_minimum : bool</span>
 <span class="sd">        With a Hessian engine, check the end point and escape from a saddle point.</span>
 <span class="sd">    imaginary_threshold : float</span>
-<span class="sd">        Imaginary frequencies (cm^-1) beyond this make a saddle point (30, Paul 11-24).</span>
+<span class="sd">        Imaginary frequencies (cm^-1) beyond this make a saddle point (30).</span>
 <span class="sd">    escape_displacement : float</span>
 <span class="sd">        The largest atomic displacement (Å) along the imaginary mode.</span>
 <span class="sd">    escape_rounds : int</span>
@@ -522,13 +522,18 @@
         <span class="n">energy</span><span class="p">,</span> <span class="n">gx</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_evaluate</span><span class="p">(</span><span class="n">xyz</span><span class="p">)</span>
         <span class="n">coords</span> <span class="o">=</span> <span class="n">coordinate_systems</span><span class="o">.</span><span class="n">make</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">coordinates</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">symbols</span><span class="p">,</span> <span class="n">xyz</span><span class="p">)</span>
         <span class="n">gq</span> <span class="o">=</span> <span class="n">coords</span><span class="o">.</span><span class="n">gradient</span><span class="p">(</span><span class="n">xyz</span><span class="p">,</span> <span class="n">gx</span><span class="p">)</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">hessian</span> <span class="o">==</span> <span class="s2">"geometric"</span><span class="p">:</span>
+        <span class="n">named</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">hessian</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">hessian</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">named</span> <span class="o">==</span> <span class="s2">"geometric"</span><span class="p">:</span>
             <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">coords</span><span class="p">,</span> <span class="s2">"guess_hessian"</span><span class="p">):</span>
                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"hessian='geometric' needs internal coordinates"</span><span class="p">)</span>
             <span class="n">hq</span> <span class="o">=</span> <span class="n">coords</span><span class="o">.</span><span class="n">guess_hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="n">hq</span> <span class="o">=</span> <span class="n">coords</span><span class="o">.</span><span class="n">hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">,</span> <span class="n">gx</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_starting_hessian</span><span class="p">(</span><span class="n">xyz</span><span class="p">))</span>
-            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">hessian</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"cheap"</span><span class="p">,</span> <span class="s2">"computed"</span><span class="p">):</span>
+            <span class="c1"># a computed Hessian -- the cheap level's, the expensive one's, or one</span>
+            <span class="c1"># given as an array -- may be indefinite away from a minimum: clamp it</span>
+            <span class="c1"># (an unclamped array Hessian crept with a tiny trust radius, Design</span>
+            <span class="c1"># 2026-11-25); the model Hessians are positive already</span>
+            <span class="k">if</span> <span class="n">named</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"cheap"</span><span class="p">,</span> <span class="s2">"computed"</span><span class="p">)</span> <span class="ow">or</span> <span class="n">named</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
                 <span class="n">hq</span> <span class="o">=</span> <span class="n">positive_hessian</span><span class="p">(</span><span class="n">hq</span><span class="p">)</span>
         <span class="n">trust</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">trust0</span>
         <span class="n">history</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">"energy"</span><span class="p">:</span> <span class="n">energy</span><span class="p">,</span> <span class="s2">"max_force"</span><span class="p">:</span> <span class="n">_max_force</span><span class="p">(</span><span class="n">gx</span><span class="p">),</span> <span class="s2">"trust"</span><span class="p">:</span> <span class="n">trust</span><span class="p">}]</span>

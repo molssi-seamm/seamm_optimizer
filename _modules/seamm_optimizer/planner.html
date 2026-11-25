@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>seamm_optimizer.planner &#8212; SEAMM Optimizer  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=75c7c72ae941e8b558d8" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=75c7c72ae941e8b558d8" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=75c7c72ae941e8b558d8"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=75c7c72ae941e8b558d8" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=75c7c72ae941e8b558d8" />
+
+    <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/seamm_optimizer/planner';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation" aria-expanded="false" aria-controls="pst-primary-sidebar-modal">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">SEAMM Optimizer  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api.html">
+    API
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal" tabindex="-1"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api.html">
+    API
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-house"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">seamm_optimizer.planner</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for seamm_optimizer.planner</h1><div class="highlight"><pre>
+<span></span><span class="c1"># -*- coding: utf-8 -*-</span>
+
+<span class="sd">"""Choosing how to optimize by the cost to the user: the figure of merit is the total</span>
+<span class="sd">time to solution, all levels included.</span>
+
+<span class="sd">Three strategies, all ending at the expensive level's minimum:</span>
+
+<span class="sd">- "lindh": quasi-Newton on the expensive level with Lindh's model Hessian;</span>
+<span class="sd">- "cheap-hessian": the same, starting from (and refreshing with) the cheap level's</span>
+<span class="sd">  Hessian;</span>
+<span class="sd">- "surrogate": the cheap level carries the steps (SurrogateOptimizer).</span>
+
+<span class="sd">The expected cost of each, in expensive gradients, comes from counts measured on the</span>
+<span class="sd">GFN2-xTB proxy (125 molecules, 3-62 atoms, Design 2026-11-24), as functions of the</span>
+<span class="sd">atom count N and the ratio r = c_cheap / c_expensive:</span>
+
+<span class="sd">    lindh          4.6 + 0.52 N</span>
+<span class="sd">    cheap-hessian  (-0.9 + 0.70 N) + (0.9 + 0.025 N) * h</span>
+<span class="sd">                   (h = the cheap Hessian's cost / c_expensive)</span>
+<span class="sd">    surrogate      (0.6 + 0.51 N) + (17.5 + 2.1 N) * r</span>
+
+<span class="sd">On</span>
+<span class="sd">that data the surrogate was cheapest up to r ~ 0.05, Lindh from r ~ 0.1-0.2, and a</span>
+<span class="sd">cheap Hessian by finite differences (6N cheap gradients) paid only when nearly free.</span>
+<span class="sd">Scored leaving each set out in turn, choosing between Lindh and the surrogate by</span>
+<span class="sd">these models came within 0-13 % of the best choice per molecule, and adding the</span>
+<span class="sd">number of rotatable bonds did not help reliably (Design 2026-11-24).</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.optimizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optimizer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.surrogate</span><span class="w"> </span><span class="kn">import</span> <span class="n">SurrogateOptimizer</span>
+
+<span class="c1">#: (a, b) of the counts above, a + b N</span>
+<span class="n">MODEL</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">"lindh"</span><span class="p">:</span> <span class="p">(</span><span class="mf">4.6</span><span class="p">,</span> <span class="mf">0.52</span><span class="p">),</span>
+    <span class="s2">"cheap-hessian"</span><span class="p">:</span> <span class="p">(</span><span class="o">-</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.70</span><span class="p">),</span>
+    <span class="s2">"cheap-hessian hessians"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.025</span><span class="p">),</span>
+    <span class="s2">"surrogate"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.51</span><span class="p">),</span>
+    <span class="s2">"surrogate cheap"</span><span class="p">:</span> <span class="p">(</span><span class="mf">17.5</span><span class="p">,</span> <span class="mf">2.1</span><span class="p">),</span>
+<span class="p">}</span>
+
+
+<div class="viewcode-block" id="Plan">
+<a class="viewcode-back" href="../../api/seamm_optimizer.html#seamm_optimizer.planner.Plan">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Plan</span><span class="p">:</span>
+    <span class="n">strategy</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">expected</span><span class="p">:</span> <span class="nb">dict</span>  <span class="c1"># strategy -&gt; expected cost in expensive gradients</span>
+    <span class="n">costs</span><span class="p">:</span> <span class="nb">dict</span></div>
+
+
+
+<div class="viewcode-block" id="expected_costs">
+<a class="viewcode-back" href="../../api/seamm_optimizer.html#seamm_optimizer.planner.expected_costs">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">expected_costs</span><span class="p">(</span><span class="n">n_atoms</span><span class="p">,</span> <span class="n">costs</span><span class="p">,</span> <span class="n">cheap</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">cheap_hessian</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">cheap_budget</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""The expected cost of each available strategy, in expensive gradients."""</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">lin</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+        <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">MODEL</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+        <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span> <span class="o">*</span> <span class="n">n_atoms</span><span class="p">)</span>
+
+    <span class="n">out</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"lindh"</span><span class="p">:</span> <span class="n">lin</span><span class="p">(</span><span class="s2">"lindh"</span><span class="p">)}</span>
+    <span class="n">c_h</span> <span class="o">=</span> <span class="n">costs</span><span class="p">[</span><span class="s2">"expensive"</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">cheap</span> <span class="ow">and</span> <span class="n">costs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"cheap"</span><span class="p">):</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">costs</span><span class="p">[</span><span class="s2">"cheap"</span><span class="p">]</span> <span class="o">/</span> <span class="n">c_h</span>
+        <span class="c1"># capping the micro-iterations does not lower the cost (fewer micro-steps,</span>
+        <span class="c1"># more outer ones: fragments at r = 0.3, 999 against 808 uncapped), so the</span>
+        <span class="c1"># uncapped cheap work is expected; at high r Lindh is chosen instead</span>
+        <span class="n">out</span><span class="p">[</span><span class="s2">"surrogate"</span><span class="p">]</span> <span class="o">=</span> <span class="n">lin</span><span class="p">(</span><span class="s2">"surrogate"</span><span class="p">)</span> <span class="o">+</span> <span class="n">lin</span><span class="p">(</span><span class="s2">"surrogate cheap"</span><span class="p">)</span> <span class="o">*</span> <span class="n">r</span>
+    <span class="c1"># a cheap Hessian by finite differences (6N cheap gradients) almost never paid</span>
+    <span class="c1"># when a cheap gradient was there for a surrogate, and choosing it on small</span>
+    <span class="c1"># predicted differences cost more than it saved (held-out: r = 0.001, 1301</span>
+    <span class="c1"># against 1090 for the surrogate alone). So with a cheap gradient the choice is</span>
+    <span class="c1"># Lindh or the surrogate; the cheap-Hessian path is a candidate only without one,</span>
+    <span class="c1"># or when the cheap Hessian's own cost is given (an analytic Hessian).</span>
+    <span class="k">if</span> <span class="n">cheap_hessian</span> <span class="ow">and</span> <span class="p">(</span>
+        <span class="ow">not</span> <span class="p">(</span><span class="n">cheap</span> <span class="ow">and</span> <span class="n">costs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"cheap"</span><span class="p">))</span> <span class="ow">or</span> <span class="s2">"cheap_hessian"</span> <span class="ow">in</span> <span class="n">costs</span>
+    <span class="p">):</span>
+        <span class="n">h_cost</span> <span class="o">=</span> <span class="n">costs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"cheap_hessian"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">h_cost</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">costs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"cheap"</span><span class="p">):</span>
+            <span class="n">h_cost</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="mi">6</span> <span class="o">*</span> <span class="n">n_atoms</span> <span class="o">*</span> <span class="n">costs</span><span class="p">[</span><span class="s2">"cheap"</span><span class="p">]</span>
+            <span class="p">)</span>  <span class="c1"># finite differences of cheap gradients</span>
+        <span class="k">if</span> <span class="n">h_cost</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">out</span><span class="p">[</span><span class="s2">"cheap-hessian"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">lin</span><span class="p">(</span><span class="s2">"cheap-hessian"</span><span class="p">)</span> <span class="o">+</span> <span class="n">lin</span><span class="p">(</span><span class="s2">"cheap-hessian hessians"</span><span class="p">)</span> <span class="o">*</span> <span class="n">h_cost</span> <span class="o">/</span> <span class="n">c_h</span>
+            <span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<div class="viewcode-block" id="measure">
+<a class="viewcode-back" href="../../api/seamm_optimizer.html#seamm_optimizer.planner.measure">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">measure</span><span class="p">(</span><span class="n">engine</span><span class="p">,</span> <span class="n">xyz</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""The wall time of one call."""</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="n">engine</span><span class="p">(</span><span class="n">xyz</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t</span></div>
+
+
+
+<div class="viewcode-block" id="plan">
+<a class="viewcode-back" href="../../api/seamm_optimizer.html#seamm_optimizer.planner.plan">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">plan</span><span class="p">(</span><span class="n">n_atoms</span><span class="p">,</span> <span class="n">costs</span><span class="p">,</span> <span class="n">cheap</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">cheap_hessian</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">cheap_budget</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+    <span class="n">expected</span> <span class="o">=</span> <span class="n">expected_costs</span><span class="p">(</span><span class="n">n_atoms</span><span class="p">,</span> <span class="n">costs</span><span class="p">,</span> <span class="n">cheap</span><span class="p">,</span> <span class="n">cheap_hessian</span><span class="p">,</span> <span class="n">cheap_budget</span><span class="p">)</span>
+    <span class="n">strategy</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">expected</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="n">expected</span><span class="o">.</span><span class="n">get</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">Plan</span><span class="p">(</span><span class="n">strategy</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="nb">dict</span><span class="p">(</span><span class="n">costs</span><span class="p">))</span></div>
+
+
+
+<div class="viewcode-block" id="optimize">
+<a class="viewcode-back" href="../../api/seamm_optimizer.html#seamm_optimizer.planner.optimize">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">optimize</span><span class="p">(</span>
+    <span class="n">engine</span><span class="p">,</span>
+    <span class="n">symbols</span><span class="p">,</span>
+    <span class="n">xyz</span><span class="p">,</span>
+    <span class="n">cheap</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">cheap_hessian</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">costs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">fmax</span><span class="o">=</span><span class="mf">0.0015</span><span class="p">,</span>
+    <span class="n">cheap_budget</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Optimize at the expensive level by the strategy with the lowest expected total</span>
+<span class="sd">    cost. `costs` = {"expensive": c_H, "cheap": c_L, "cheap_hessian": c_LH} in any</span>
+<span class="sd">    units; missing ones are measured from one call each (the measuring calls are not</span>
+<span class="sd">    wasted: the expensive one is at the start). Returns the result, with .plan."""</span>
+    <span class="n">costs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">costs</span> <span class="ow">or</span> <span class="p">{})</span>
+    <span class="k">if</span> <span class="s2">"expensive"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">costs</span><span class="p">:</span>
+        <span class="n">costs</span><span class="p">[</span><span class="s2">"expensive"</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure</span><span class="p">(</span><span class="n">engine</span><span class="p">,</span> <span class="n">xyz</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">cheap</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="s2">"cheap"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">costs</span><span class="p">:</span>
+        <span class="n">costs</span><span class="p">[</span><span class="s2">"cheap"</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure</span><span class="p">(</span><span class="n">cheap</span><span class="p">,</span> <span class="n">xyz</span><span class="p">)</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">plan</span><span class="p">(</span>
+        <span class="nb">len</span><span class="p">(</span><span class="n">symbols</span><span class="p">),</span> <span class="n">costs</span><span class="p">,</span> <span class="n">cheap</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">,</span> <span class="n">cheap_hessian</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">,</span> <span class="n">cheap_budget</span>
+    <span class="p">)</span>
+    <span class="c1"># a cheap Hessian is used for the minimum check (and fallback) only if affordable</span>
+    <span class="n">affordable</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">cheap_hessian</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="ow">and</span> <span class="p">(</span><span class="n">costs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"cheap_hessian"</span><span class="p">)</span> <span class="ow">or</span> <span class="mi">6</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">symbols</span><span class="p">)</span> <span class="o">*</span> <span class="n">costs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"cheap"</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
+        <span class="o">&lt;=</span> <span class="mf">5.0</span> <span class="o">*</span> <span class="n">costs</span><span class="p">[</span><span class="s2">"expensive"</span><span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">hessian</span> <span class="o">=</span> <span class="n">cheap_hessian</span> <span class="k">if</span> <span class="n">affordable</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">strategy</span> <span class="o">==</span> <span class="s2">"surrogate"</span><span class="p">:</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">SurrogateOptimizer</span><span class="p">(</span>
+            <span class="n">engine</span><span class="p">,</span>
+            <span class="n">cheap</span><span class="p">,</span>
+            <span class="n">symbols</span><span class="p">,</span>
+            <span class="n">xyz</span><span class="p">,</span>
+            <span class="n">fmax</span><span class="o">=</span><span class="n">fmax</span><span class="p">,</span>
+            <span class="n">cheap_hessian_engine</span><span class="o">=</span><span class="n">hessian</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+    <span class="k">elif</span> <span class="n">p</span><span class="o">.</span><span class="n">strategy</span> <span class="o">==</span> <span class="s2">"cheap-hessian"</span><span class="p">:</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">Optimizer</span><span class="p">(</span>
+            <span class="n">engine</span><span class="p">,</span>
+            <span class="n">symbols</span><span class="p">,</span>
+            <span class="n">xyz</span><span class="p">,</span>
+            <span class="n">fmax</span><span class="o">=</span><span class="n">fmax</span><span class="p">,</span>
+            <span class="n">hessian</span><span class="o">=</span><span class="s2">"cheap"</span><span class="p">,</span>
+            <span class="n">cheap_hessian_engine</span><span class="o">=</span><span class="n">cheap_hessian</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">Optimizer</span><span class="p">(</span>
+            <span class="n">engine</span><span class="p">,</span>
+            <span class="n">symbols</span><span class="p">,</span>
+            <span class="n">xyz</span><span class="p">,</span>
+            <span class="n">fmax</span><span class="o">=</span><span class="n">fmax</span><span class="p">,</span>
+            <span class="n">hessian</span><span class="o">=</span><span class="s2">"lindh"</span><span class="p">,</span>
+            <span class="n">cheap_hessian_engine</span><span class="o">=</span><span class="n">hessian</span><span class="p">,</span>
+            <span class="n">refresh</span><span class="o">=</span><span class="s2">"never"</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+    <span class="n">r</span><span class="o">.</span><span class="n">plan</span> <span class="o">=</span> <span class="n">p</span>
+    <span class="k">return</span> <span class="n">r</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=75c7c72ae941e8b558d8"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=75c7c72ae941e8b558d8"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Paul Saxe. Project structure based on the Computational Molecular Science Python Cookiecutter version 1.1.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.1.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.24.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

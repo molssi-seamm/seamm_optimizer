@@ -328,7 +328,7 @@
 <span id="seamm-optimizer-coordinates-module"></span><h2>seamm_optimizer.coordinates module<a class="headerlink" href="#module-seamm_optimizer.coordinates" title="Link to this heading">#</a></h2>
 <p>Coordinate systems for the optimizer: Cartesians, and internal coordinates built
 with geomeTRIC’s code (TRIC, delocalized internals, redundant primitives), per the
-design (proposal §4, Paul’s §10 decision 1).</p>
+design (proposal §4 and §10).</p>
 <p>Every system works in atomic units internally (bohr, hartree) and offers:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">q(xyz)</span></code>: the coordinates of a Cartesian structure (Å in, a vector out);</p></li>
@@ -623,7 +623,7 @@ coordinates used (bohr and radians; bohr for Cartesians).</p></li>
 <li><p><strong>min_trust</strong> (<em>float</em>) – The trust radius and its limits, as the length of the step in the
 coordinates used (bohr and radians; bohr for Cartesians).</p></li>
 <li><p><strong>check_minimum</strong> (<em>bool</em>) – With a Hessian engine, check the end point and escape from a saddle point.</p></li>
-<li><p><strong>imaginary_threshold</strong> (<em>float</em>) – Imaginary frequencies (cm^-1) beyond this make a saddle point (30, Paul 11-24).</p></li>
+<li><p><strong>imaginary_threshold</strong> (<em>float</em>) – Imaginary frequencies (cm^-1) beyond this make a saddle point (30).</p></li>
 <li><p><strong>escape_displacement</strong> (<em>float</em>) – The largest atomic displacement (Å) along the imaginary mode.</p></li>
 <li><p><strong>escape_rounds</strong> (<em>int</em>) – How many times to escape from a saddle point at most.</p></li>
 <li><p><strong>confirm_displacement</strong> (<em>float</em>) – The largest atomic displacement (Å) for confirming, from expensive gradients,
@@ -760,6 +760,88 @@ keep the lower; up to escape_rounds rounds.</p>
 </dd></dl>
 
 </section>
+<section id="module-seamm_optimizer.planner">
+<span id="seamm-optimizer-planner-module"></span><h2>seamm_optimizer.planner module<a class="headerlink" href="#module-seamm_optimizer.planner" title="Link to this heading">#</a></h2>
+<p>Choosing how to optimize by the cost to the user: the figure of merit is the total
+time to solution, all levels included.</p>
+<p>Three strategies, all ending at the expensive level’s minimum:</p>
+<ul class="simple">
+<li><p>“lindh”: quasi-Newton on the expensive level with Lindh’s model Hessian;</p></li>
+<li><p>“cheap-hessian”: the same, starting from (and refreshing with) the cheap level’s
+Hessian;</p></li>
+<li><p>“surrogate”: the cheap level carries the steps (SurrogateOptimizer).</p></li>
+</ul>
+<p>The expected cost of each, in expensive gradients, comes from counts measured on the
+GFN2-xTB proxy (125 molecules, 3-62 atoms, Design 2026-11-24), as functions of the
+atom count N and the ratio r = c_cheap / c_expensive:</p>
+<blockquote>
+<div><p>lindh          4.6 + 0.52 N
+cheap-hessian  (-0.9 + 0.70 N) + (0.9 + 0.025 N) * h</p>
+<blockquote>
+<div><p>(h = the cheap Hessian’s cost / c_expensive)</p>
+</div></blockquote>
+<p>surrogate      (0.6 + 0.51 N) + (17.5 + 2.1 N) * r</p>
+</div></blockquote>
+<p>On
+that data the surrogate was cheapest up to r ~ 0.05, Lindh from r ~ 0.1-0.2, and a
+cheap Hessian by finite differences (6N cheap gradients) paid only when nearly free.
+Scored leaving each set out in turn, choosing between Lindh and the surrogate by
+these models came within 0-13 % of the best choice per molecule, and adding the
+number of rotatable bonds did not help reliably (Design 2026-11-24).</p>
+<dl class="py data">
+<dt class="sig sig-object py" id="seamm_optimizer.planner.MODEL">
+<span class="sig-prename descclassname"><span class="pre">seamm_optimizer.planner.</span></span><span class="sig-name descname"><span class="pre">MODEL</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{'cheap-hessian':</span> <span class="pre">(-0.9,</span> <span class="pre">0.7),</span> <span class="pre">'cheap-hessian</span> <span class="pre">hessians':</span> <span class="pre">(0.9,</span> <span class="pre">0.025),</span> <span class="pre">'lindh':</span> <span class="pre">(4.6,</span> <span class="pre">0.52),</span> <span class="pre">'surrogate':</span> <span class="pre">(0.6,</span> <span class="pre">0.51),</span> <span class="pre">'surrogate</span> <span class="pre">cheap':</span> <span class="pre">(17.5,</span> <span class="pre">2.1)}</span></span><a class="headerlink" href="#seamm_optimizer.planner.MODEL" title="Link to this definition">#</a></dt>
+<dd><p>(a, b) of the counts above, a + b N</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="seamm_optimizer.planner.Plan">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">seamm_optimizer.planner.</span></span><span class="sig-name descname"><span class="pre">Plan</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">strategy</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">expected</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">costs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/planner.html#Plan"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.planner.Plan" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.planner.Plan.costs">
+<span class="sig-name descname"><span class="pre">costs</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">dict</span></span><a class="headerlink" href="#seamm_optimizer.planner.Plan.costs" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.planner.Plan.expected">
+<span class="sig-name descname"><span class="pre">expected</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">dict</span></span><a class="headerlink" href="#seamm_optimizer.planner.Plan.expected" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.planner.Plan.strategy">
+<span class="sig-name descname"><span class="pre">strategy</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#seamm_optimizer.planner.Plan.strategy" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="seamm_optimizer.planner.expected_costs">
+<span class="sig-prename descclassname"><span class="pre">seamm_optimizer.planner.</span></span><span class="sig-name descname"><span class="pre">expected_costs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_atoms</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">costs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap_hessian</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap_budget</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/planner.html#expected_costs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.planner.expected_costs" title="Link to this definition">#</a></dt>
+<dd><p>The expected cost of each available strategy, in expensive gradients.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="seamm_optimizer.planner.measure">
+<span class="sig-prename descclassname"><span class="pre">seamm_optimizer.planner.</span></span><span class="sig-name descname"><span class="pre">measure</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">engine</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">xyz</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/planner.html#measure"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.planner.measure" title="Link to this definition">#</a></dt>
+<dd><p>The wall time of one call.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="seamm_optimizer.planner.optimize">
+<span class="sig-prename descclassname"><span class="pre">seamm_optimizer.planner.</span></span><span class="sig-name descname"><span class="pre">optimize</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">engine</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">symbols</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">xyz</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap_hessian</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">costs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fmax</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0015</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap_budget</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/planner.html#optimize"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.planner.optimize" title="Link to this definition">#</a></dt>
+<dd><p>Optimize at the expensive level by the strategy with the lowest expected total
+cost. <cite>costs</cite> = {“expensive”: c_H, “cheap”: c_L, “cheap_hessian”: c_LH} in any
+units; missing ones are measured from one call each (the measuring calls are not
+wasted: the expensive one is at the start). Returns the result, with .plan.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="seamm_optimizer.planner.plan">
+<span class="sig-prename descclassname"><span class="pre">seamm_optimizer.planner.</span></span><span class="sig-name descname"><span class="pre">plan</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_atoms</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">costs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap_hessian</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap_budget</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/planner.html#plan"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.planner.plan" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+</section>
 <section id="module-seamm_optimizer.steps">
 <span id="seamm-optimizer-steps-module"></span><h2>seamm_optimizer.steps module<a class="headerlink" href="#module-seamm_optimizer.steps" title="Link to this heading">#</a></h2>
 <p>Steps and Hessian updates for minimization.</p>
@@ -798,6 +880,198 @@ over 25 CHNO PM7 starts against 504 raw (abs values: 418; Design 2026-11-24).</p
 <span class="sig-prename descclassname"><span class="pre">seamm_optimizer.steps.</span></span><span class="sig-name descname"><span class="pre">rfo_step</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">g</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">H</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">trust</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">null</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/steps.html#rfo_step"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.steps.rfo_step" title="Link to this definition">#</a></dt>
 <dd><p>(step, predicted energy change, kind) for gradient g (3N) and Hessian H.</p>
 <p>kind is “rfo” or “restricted” (the step on the trust sphere).</p>
+</dd></dl>
+
+</section>
+<section id="module-seamm_optimizer.surrogate">
+<span id="seamm-optimizer-surrogate-module"></span><h2>seamm_optimizer.surrogate module<a class="headerlink" href="#module-seamm_optimizer.surrogate" title="Link to this heading">#</a></h2>
+<p>Phase 4: a cheap level carries the expensive one (design proposal §6).</p>
+<p>At each expensive point x_k both levels are evaluated, and the surrogate</p>
+<blockquote>
+<div><p>S(x) = E_L(x) + ΔE_k + Δg_k·(x − x_k) + ½ (x − x_k)ᵀ ΔB (x − x_k),   Δ = H − L,</p>
+</div></blockquote>
+<p>which agrees with the expensive level H at x_k, is minimized on the cheap level L in
+micro-iterations (our own optimizer, within a trust radius). The expensive level is
+evaluated at the result, and the step accepted or rejected on the ratio of its actual
+to the predicted change. ΔB, the Hessian of the difference, is learned from the
+differences of Δg between expensive points with symmetric-rank-one updates (a
+difference of Hessians need not be positive definite). ΔB = 0 is MOPAC’s
+Δ-gradient method (variant “delta-gradient”); without a cheap level it would be
+quasi-Newton on H.</p>
+<p>Every evaluation on both levels is counted, so that the cost – the user’s time to
+solution – can be judged at any ratio of the levels’ costs.</p>
+<dl class="py data">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.DB_CAP">
+<span class="sig-prename descclassname"><span class="pre">seamm_optimizer.surrogate.</span></span><span class="sig-name descname"><span class="pre">DB_CAP</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">10.0</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.DB_CAP" title="Link to this definition">#</a></dt>
+<dd><p>differences
+between levels are much smaller than the Hessians themselves (stretches ~30-60)</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>the largest <a href="#id11"><span class="problematic" id="id12">|eigenvalue|</span></a> (eV/Å^2) of the learned Hessian difference</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateOptimizer">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">seamm_optimizer.surrogate.</span></span><span class="sig-name descname"><span class="pre">SurrogateOptimizer</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">engine</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">surrogate</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">symbols</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">xyz</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fmax</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0015</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">variant</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'delta-hessian'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_steps</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">trust</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_trust</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_trust</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.002</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inner_fmax_factor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inner_relative</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inner_max_steps</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">50</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">costs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap_budget</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hessian_engine</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap_hessian_engine</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">check_minimum</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wander</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fallback_after</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">escape_displacement</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">escape_rounds</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">switch</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">switch_after</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">switch_margin</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.8</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/surrogate.html#SurrogateOptimizer"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateOptimizer" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Minimize the expensive <cite>engine</cite> with the cheap <cite>surrogate</cite> carrying the steps.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>engine</strong> (<em>callable</em>) – <code class="docutils literal notranslate"><span class="pre">f(xyz)</span> <span class="pre">-&gt;</span> <span class="pre">(energy</span> <span class="pre">eV,</span> <span class="pre">gradient</span> <span class="pre">eV/Å</span> <span class="pre">(N,</span> <span class="pre">3))</span></code> at the expensive and the cheap
+level.</p></li>
+<li><p><strong>surrogate</strong> (<em>callable</em>) – <code class="docutils literal notranslate"><span class="pre">f(xyz)</span> <span class="pre">-&gt;</span> <span class="pre">(energy</span> <span class="pre">eV,</span> <span class="pre">gradient</span> <span class="pre">eV/Å</span> <span class="pre">(N,</span> <span class="pre">3))</span></code> at the expensive and the cheap
+level.</p></li>
+<li><p><strong>symbols</strong> (<em>list</em><em>, </em><em>array</em>) – The atoms and the start (Å).</p></li>
+<li><p><strong>xyz</strong> (<em>list</em><em>, </em><em>array</em>) – The atoms and the start (Å).</p></li>
+<li><p><strong>fmax</strong> (<em>float</em>) – Convergence: the largest force on an atom at the expensive level (eV/Å).</p></li>
+<li><p><strong>variant</strong> (<em>str</em>) – “delta-hessian” (ΔB learned) or “delta-gradient” (ΔB = 0, as MOPAC).</p></li>
+<li><p><strong>trust</strong> (<em>float</em>) – The trust radius: the largest atomic displacement of a step (Å).</p></li>
+<li><p><strong>max_trust</strong> (<em>float</em>) – The trust radius: the largest atomic displacement of a step (Å).</p></li>
+<li><p><strong>min_trust</strong> (<em>float</em>) – The trust radius: the largest atomic displacement of a step (Å).</p></li>
+<li><p><strong>inner_fmax_factor</strong> (<em>float</em><em>, </em><em>float</em><em>, </em><em>int</em>) – The micro-iterations converge S to the larger of inner_fmax_factor × fmax and
+inner_relative × the current largest expensive force, in at most
+inner_max_steps cheap gradients.</p></li>
+<li><p><strong>inner_relative</strong> (<em>float</em><em>, </em><em>float</em><em>, </em><em>int</em>) – The micro-iterations converge S to the larger of inner_fmax_factor × fmax and
+inner_relative × the current largest expensive force, in at most
+inner_max_steps cheap gradients.</p></li>
+<li><p><strong>inner_max_steps</strong> (<em>float</em><em>, </em><em>float</em><em>, </em><em>int</em>) – The micro-iterations converge S to the larger of inner_fmax_factor × fmax and
+inner_relative × the current largest expensive force, in at most
+inner_max_steps cheap gradients.</p></li>
+<li><p><strong>hessian_engine</strong> (<em>callable</em><em>, </em><em>optional</em>) – For checking the end point (the cheap level’s modes confirmed at the
+expensive level, as Optimizer does); no check without either. The cheap
+Hessian also serves the quasi-Newton fallback.</p></li>
+<li><p><strong>cheap_hessian_engine</strong> (<em>callable</em><em>, </em><em>optional</em>) – For checking the end point (the cheap level’s modes confirmed at the
+expensive level, as Optimizer does); no check without either. The cheap
+Hessian also serves the quasi-Newton fallback.</p></li>
+<li><p><strong>costs</strong> (<em>dict</em><em>, </em><em>optional</em>) – The cost of one call at each level, {“expensive”: c_H, “cheap”: c_L} (any
+units, e.g. seconds): the micro-iterations per step are capped at
+cheap_budget * c_H / c_L. Without it, inner_max_steps.</p></li>
+<li><p><strong>cheap_budget</strong> (<em>float</em>) – The cheap work allowed per step, in expensive gradients.</p></li>
+<li><p><strong>wander</strong> (<em>float</em>) – The micro-iterations stop beyond this many trust radii.</p></li>
+<li><p><strong>fallback_after</strong> (<em>int</em>) – After this many poor surrogate steps in a row (ratio &lt; 0.25, or no step
+found), the rest is quasi-Newton on the expensive level alone; also when the
+cheap level fails at an expensive point.</p></li>
+<li><p><strong>switch</strong> (<em>bool</em><em>, </em><em>int</em><em>, </em><em>float</em>) – With a cheap Hessian engine, track a quasi-Newton model (the cheap Hessian,
+BFGS-updated) beside the surrogate; when it predicts the next expensive
+gradient better (error &lt; switch_margin x the surrogate’s) switch_after times
+in a row, continue as the cheap-Hessian optimizer.</p></li>
+<li><p><strong>switch_after</strong> (<em>bool</em><em>, </em><em>int</em><em>, </em><em>float</em>) – With a cheap Hessian engine, track a quasi-Newton model (the cheap Hessian,
+BFGS-updated) beside the surrogate; when it predicts the next expensive
+gradient better (error &lt; switch_margin x the surrogate’s) switch_after times
+in a row, continue as the cheap-Hessian optimizer.</p></li>
+<li><p><strong>switch_margin</strong> (<em>bool</em><em>, </em><em>int</em><em>, </em><em>float</em>) – With a cheap Hessian engine, track a quasi-Newton model (the cheap Hessian,
+BFGS-updated) beside the surrogate; when it predicts the next expensive
+gradient better (error &lt; switch_margin x the surrogate’s) switch_after times
+in a row, continue as the cheap-Hessian optimizer.</p></li>
+<li><p><strong>escape_displacement</strong> (<em>float</em><em>, </em><em>int</em>) – As for Optimizer: the escape from a confirmed saddle point.</p></li>
+<li><p><strong>escape_rounds</strong> (<em>float</em><em>, </em><em>int</em>) – As for Optimizer: the escape from a confirmed saddle point.</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateOptimizer.run">
+<span class="sig-name descname"><span class="pre">run</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/surrogate.html#SurrogateOptimizer.run"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateOptimizer.run" title="Link to this definition">#</a></dt>
+<dd><p>Minimize, then check the end point (the cheap level’s imaginary modes
+confirmed at the expensive level, as Optimizer does) and escape from a
+confirmed saddle: displace along the mode both ways, minimize each, keep the
+lower; up to escape_rounds rounds.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">seamm_optimizer.surrogate.</span></span><span class="sig-name descname"><span class="pre">SurrogateResult</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">xyz</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">numpy.ndarray</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">energy</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">float</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gradient</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">numpy.ndarray</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">converged</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_gradients</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_cheap_gradients</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_cheap_hessians</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_steps</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_rejected</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">minimum</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">lowest_frequency</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">confirmations</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">&lt;factory&gt;</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">escapes</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">&lt;factory&gt;</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fallback</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">history</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">&lt;factory&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/surrogate.html#SurrogateResult"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.confirmations">
+<span class="sig-name descname"><span class="pre">confirmations</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.confirmations" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.converged">
+<span class="sig-name descname"><span class="pre">converged</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.converged" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.cost">
+<span class="sig-name descname"><span class="pre">cost</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ratio</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cheap_hessians</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hessian_cost</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/seamm_optimizer/surrogate.html#SurrogateResult.cost"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.cost" title="Link to this definition">#</a></dt>
+<dd><p>The cost in expensive gradients, with a cheap gradient costing <cite>ratio</cite>.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.energy">
+<span class="sig-name descname"><span class="pre">energy</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.energy" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.escapes">
+<span class="sig-name descname"><span class="pre">escapes</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.escapes" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.fallback">
+<span class="sig-name descname"><span class="pre">fallback</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.fallback" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.gradient">
+<span class="sig-name descname"><span class="pre">gradient</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">ndarray</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.gradient" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.history">
+<span class="sig-name descname"><span class="pre">history</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.history" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.lowest_frequency">
+<span class="sig-name descname"><span class="pre">lowest_frequency</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.lowest_frequency" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.max_force">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">max_force</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.max_force" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.minimum">
+<span class="sig-name descname"><span class="pre">minimum</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.minimum" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.n_cheap_gradients">
+<span class="sig-name descname"><span class="pre">n_cheap_gradients</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.n_cheap_gradients" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.n_cheap_hessians">
+<span class="sig-name descname"><span class="pre">n_cheap_hessians</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.n_cheap_hessians" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.n_gradients">
+<span class="sig-name descname"><span class="pre">n_gradients</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.n_gradients" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.n_rejected">
+<span class="sig-name descname"><span class="pre">n_rejected</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.n_rejected" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.n_steps">
+<span class="sig-name descname"><span class="pre">n_steps</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.n_steps" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="seamm_optimizer.surrogate.SurrogateResult.xyz">
+<span class="sig-name descname"><span class="pre">xyz</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">ndarray</span></span><a class="headerlink" href="#seamm_optimizer.surrogate.SurrogateResult.xyz" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
 </dd></dl>
 
 </section>
@@ -919,11 +1193,53 @@ BFGS updates, and a minimum check with an escape from saddle points.</p>
 </li>
 </ul>
 </li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#module-seamm_optimizer.planner">seamm_optimizer.planner module</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.planner.MODEL"><code class="docutils literal notranslate"><span class="pre">MODEL</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.planner.Plan"><code class="docutils literal notranslate"><span class="pre">Plan</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.planner.Plan.costs"><code class="docutils literal notranslate"><span class="pre">Plan.costs</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.planner.Plan.expected"><code class="docutils literal notranslate"><span class="pre">Plan.expected</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.planner.Plan.strategy"><code class="docutils literal notranslate"><span class="pre">Plan.strategy</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.planner.expected_costs"><code class="docutils literal notranslate"><span class="pre">expected_costs()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.planner.measure"><code class="docutils literal notranslate"><span class="pre">measure()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.planner.optimize"><code class="docutils literal notranslate"><span class="pre">optimize()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.planner.plan"><code class="docutils literal notranslate"><span class="pre">plan()</span></code></a></li>
+</ul>
+</li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#module-seamm_optimizer.steps">seamm_optimizer.steps module</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.steps.HESSIAN_FLOOR"><code class="docutils literal notranslate"><span class="pre">HESSIAN_FLOOR</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.steps.bfgs_update"><code class="docutils literal notranslate"><span class="pre">bfgs_update()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.steps.positive_hessian"><code class="docutils literal notranslate"><span class="pre">positive_hessian()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.steps.rfo_step"><code class="docutils literal notranslate"><span class="pre">rfo_step()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#module-seamm_optimizer.surrogate">seamm_optimizer.surrogate module</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.DB_CAP"><code class="docutils literal notranslate"><span class="pre">DB_CAP</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateOptimizer"><code class="docutils literal notranslate"><span class="pre">SurrogateOptimizer</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateOptimizer.run"><code class="docutils literal notranslate"><span class="pre">SurrogateOptimizer.run()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult"><code class="docutils literal notranslate"><span class="pre">SurrogateResult</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.confirmations"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.confirmations</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.converged"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.converged</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.cost"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.cost()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.energy"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.energy</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.escapes"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.escapes</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.fallback"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.fallback</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.gradient"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.gradient</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.history"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.history</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.lowest_frequency"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.lowest_frequency</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.max_force"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.max_force</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.minimum"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.minimum</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.n_cheap_gradients"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.n_cheap_gradients</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.n_cheap_hessians"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.n_cheap_hessians</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.n_gradients"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.n_gradients</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.n_rejected"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.n_rejected</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.n_steps"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.n_steps</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#seamm_optimizer.surrogate.SurrogateResult.xyz"><code class="docutils literal notranslate"><span class="pre">SurrogateResult.xyz</span></code></a></li>
+</ul>
+</li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#module-seamm_optimizer">Module contents</a></li>
