@@ -72,6 +72,36 @@ def test_bfgs_update_satisfies_the_secant_condition_and_skips_bad_curvature():
     assert updated and np.allclose(H1 @ s, y)
     H2, updated = bfgs_update(H, s, -y)
     assert not updated and np.array_equal(H2, H)
+    # no curvature along the step in the model (unbonded atoms): no division
+    # by zero, and the secant condition still holds
+    H0 = np.diag([0.0, 1.0, 1.0, 1.0])
+    s0, y0 = np.array([0.1, 0, 0, 0]), np.array([0.2, 0, 0, 0])
+    H3, updated = bfgs_update(H0, s0, y0)
+    assert updated and np.all(np.isfinite(H3)) and np.allclose(H3 @ s0, y0)
+
+
+def test_unbonded_atoms_lennard_jones():
+    """Three argon atoms (no bonds, a Lindh Hessian with little or no curvature
+    along some steps) reach the equilateral pair minimum: the BFGS update once
+    divided by zero here (Design 2026-11-25)."""
+    from ase import Atoms
+    from ase.calculators.lj import LennardJones
+
+    atoms = Atoms("Ar3", positions=[[0, 0, 0], [3.9, 0.1, 0], [1.7, 3.2, 0.2]])
+    atoms.calc = LennardJones(sigma=3.4, epsilon=0.0104, rc=10.0)
+
+    def engine(x):
+        atoms.positions = x
+        return atoms.get_potential_energy(), -atoms.get_forces()
+
+    r = Optimizer(
+        engine, ["Ar"] * 3, atoms.positions.copy(), fmax=1e-4, check_minimum=False
+    ).run()
+    assert r.converged
+    d = sorted(
+        np.linalg.norm(r.xyz[i] - r.xyz[j]) for i in range(3) for j in range(i + 1, 3)
+    )
+    assert d == pytest.approx([2 ** (1 / 6) * 3.4] * 3, abs=0.005)
 
 
 def test_frequencies_of_a_minimum_are_real():
